@@ -8,5 +8,7 @@ anthropic>=0.40.0
 pdfplumber>=0.10
 gtts>=2.4
 pygame>=2.5
+SpeechRecognition>=3.10
+pyaudio>=0.2.14
 pytest>=7.4
 pytest-cov>=4.1

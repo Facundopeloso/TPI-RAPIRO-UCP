@@ -21,6 +21,7 @@ from src.actuation.rapiro import RAPIROController
 from src.cloud.iot_publisher import IoTPublisher
 from src.tutoring.document_processor import DocumentProcessor
 from src.tutoring.tutor import IntelligentTutor
+from src.tutoring.voice_listener import VoiceListener
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO), format=LOG_FORMAT)
 logger = logging.getLogger(__name__)
@@ -52,8 +53,19 @@ def main() -> None:
 
     tutor = IntelligentTutor(doc_processor)
 
+    def on_question(question: str) -> None:
+        logger.info("Pregunta por voz: %s", question)
+        rapiro.activate_tutoring()
+        tutor.answer_and_speak(question)
+        rapiro.deactivate_tutoring()
+
+    voice = VoiceListener(on_question=on_question)
+    if voice.start():
+        logger.info("Tutoría por voz activa — di '%s' para preguntar.", "RAPIRO ayuda")
+
     def shutdown(sig, frame):
         logger.info("Señal de apagado recibida. Cerrando...")
+        voice.stop()
         rapiro.cleanup()
         if cloud:
             cloud.disconnect()
