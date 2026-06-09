@@ -1,0 +1,12 @@
+numpy>=1.24
+opencv-python>=4.8
+tensorflow>=2.13; platform_machine != "aarch64"
+tflite-runtime>=2.13; platform_machine == "aarch64"
+python-dotenv>=1.0
+pyserial>=3.5
+openai>=1.0
+pdfplumber>=0.10
+gtts>=2.4
+pygame>=2.5
+pytest>=7.4
+pytest-cov>=4.1
