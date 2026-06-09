@@ -16,7 +16,6 @@ certs/
 *.pem
 *.key
 .claude/
-models/*.tflite
 models/*_saved/
 models/plots/
 dataset/class_0/*.jpg
