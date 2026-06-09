@@ -1,0 +1,11 @@
+services:
+  dashboard:
+    build: .
+    ports:
+      - "80:8000"
+    environment:
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-sa-east-1}
+      - DYNAMODB_TABLE=${DYNAMODB_TABLE:-rapiro_sessions_dev}
+      - S3_BUCKET=${S3_BUCKET:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    restart: unless-stopped

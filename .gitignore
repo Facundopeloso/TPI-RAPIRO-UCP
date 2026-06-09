@@ -7,10 +7,15 @@ __pycache__/
 htmlcov/
 venv/
 .venv/
+**/venv/
+**/.venv/
 *.egg-info/
 dist/
 build/
 certs/
+*.pem
+*.key
+.claude/
 models/*.tflite
 models/*_saved/
 models/plots/
@@ -21,3 +26,4 @@ lambda/*.zip
 terraform/.terraform/
 terraform/terraform.tfstate*
 terraform/.terraform.lock.hcl
+terraform/terraform.tfvars

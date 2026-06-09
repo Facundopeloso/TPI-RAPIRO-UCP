@@ -65,10 +65,9 @@ ABSENCE_ALERT_THRESHOLD_SEC = int(os.getenv("ABSENCE_ALERT_THRESHOLD_SEC", "300"
 # ---------------------------------------------------------------------------
 # TUTORÍA LLM
 # ---------------------------------------------------------------------------
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-3.5-turbo")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+LLM_MODEL = os.getenv("LLM_MODEL", "claude-haiku-4-5")
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "500"))
-LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 
 # Segmentación de documentos
 DOCUMENT_CHUNK_SIZE_WORDS = int(os.getenv("DOCUMENT_CHUNK_SIZE_WORDS", "500"))

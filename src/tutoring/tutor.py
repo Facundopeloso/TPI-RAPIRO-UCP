@@ -1,11 +1,11 @@
 """
 src/tutoring/tutor.py
-Módulo de tutoría inteligente: TF-IDF + LLM (OpenAI GPT-3.5 Turbo).
+Módulo de tutoría inteligente: TF-IDF + Claude (Anthropic).
 """
 
 import logging
 from config.settings import (
-    OPENAI_API_KEY, LLM_MODEL, LLM_MAX_TOKENS, LLM_TEMPERATURE,
+    ANTHROPIC_API_KEY, LLM_MODEL, LLM_MAX_TOKENS,
     DOCUMENT_TOP_K_CHUNKS, SPEECH_LANGUAGE
 )
 from src.tutoring.document_processor import DocumentProcessor
@@ -26,19 +26,19 @@ class IntelligentTutor:
 
     def __init__(self, document_processor: DocumentProcessor):
         self._doc_processor = document_processor
-        self._client = self._init_openai_client()
+        self._client = self._init_anthropic_client()
 
-    def _init_openai_client(self):
-        if not OPENAI_API_KEY:
-            logger.warning("OPENAI_API_KEY no configurada — tutoría LLM deshabilitada.")
+    def _init_anthropic_client(self):
+        if not ANTHROPIC_API_KEY:
+            logger.warning("ANTHROPIC_API_KEY no configurada — tutoría LLM deshabilitada.")
             return None
         try:
-            from openai import OpenAI
-            client = OpenAI(api_key=OPENAI_API_KEY)
-            logger.info("Cliente OpenAI inicializado (modelo: %s).", LLM_MODEL)
+            import anthropic
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            logger.info("Cliente Anthropic inicializado (modelo: %s).", LLM_MODEL)
             return client
         except ImportError:
-            logger.error("openai no instalado. Ejecutar: pip install openai")
+            logger.error("anthropic no instalado. Ejecutar: pip install anthropic")
             return None
 
     def answer(self, question: str) -> str:
@@ -57,21 +57,18 @@ class IntelligentTutor:
         )
 
         try:
-            response = self._client.chat.completions.create(
+            response = self._client.messages.create(
                 model=LLM_MODEL,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_message},
-                ],
                 max_tokens=LLM_MAX_TOKENS,
-                temperature=LLM_TEMPERATURE,
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": user_message}],
             )
-            answer_text = response.choices[0].message.content.strip()
-            logger.info("LLM respondió correctamente (%d chars).", len(answer_text))
+            answer_text = response.content[0].text.strip()
+            logger.info("Claude respondió correctamente (%d chars).", len(answer_text))
             return answer_text
 
         except Exception as exc:
-            logger.error("Error al llamar al LLM: %s", exc)
+            logger.error("Error al llamar a Claude: %s", exc)
             return "Hubo un error al procesar tu consulta. Intenta nuevamente."
 
     def speak(self, text: str) -> None:
