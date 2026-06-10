@@ -51,16 +51,18 @@ def main() -> None:
         n_chunks = doc_processor.load_from_file(args.document)
         logger.info("Documento cargado: %d chunks indexados.", n_chunks)
 
-    tutor = IntelligentTutor(doc_processor)
+    # Pasar rapiro al tutor para que reaccione físicamente en cada interacción
+    tutor = IntelligentTutor(doc_processor, rapiro=rapiro)
 
     def on_question(question: str) -> None:
         logger.info("Pregunta por voz: %s", question)
-        rapiro.activate_tutoring()
-        tutor.answer_and_speak(question)
-        rapiro.deactivate_tutoring()
+        rapiro.react_hotword_detected()     # azul brillante + mira usuario
+        tutor.answer_and_speak(question)    # pensar → explicar → hablar (con reacciones)
+        rapiro.deactivate_tutoring()        # vuelve a verde + neutro
 
     voice = VoiceListener(on_question=on_question)
     if voice.start():
+        rapiro.react_listening()            # pulso azul: escuchando hotword
         logger.info("Tutoría por voz activa — di '%s' para preguntar.", "RAPIRO ayuda")
 
     def shutdown(sig, frame):

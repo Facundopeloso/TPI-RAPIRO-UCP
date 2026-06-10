@@ -217,13 +217,17 @@ la concentracion de CO2, la temperatura y la disponibilidad de agua y nutrientes
 """
 
 
+def rapiro_action(msg: str) -> None:
+    """Imprime la acción física de RAPIRO en el demo (simula hardware)."""
+    print(f"  {BLUE}{BOLD}[RAPIRO]{RESET} {GRAY}{msg}{RESET}")
+
+
 def run_quiz_mode():
     """Modo tutor interactivo: explicacion + quiz multiple choice."""
     print(f"\n{BOLD}{'='*58}{RESET}")
     print(f"{BOLD}   RAPIRO Guardian -- MODO TUTOR INTERACTIVO{RESET}")
     print(f"{BOLD}{'='*58}{RESET}\n")
 
-    # Configurar tutor
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     os.environ.setdefault("MODEL_PATH", "models/mobilenetv2_int8.tflite")
 
@@ -234,7 +238,7 @@ def run_quiz_mode():
     n_chunks = doc.load_from_text(SAMPLE_TEXT)
     print(f"{GRAY}  Documento de ejemplo cargado ({n_chunks} chunks){RESET}")
 
-    tutor = IntelligentTutor(doc)
+    tutor = IntelligentTutor(doc)   # sin rapiro hardware, pero mostramos acciones
 
     if not tutor._available():
         print(f"{RED}  ANTHROPIC_API_KEY no configurada.{RESET}")
@@ -250,9 +254,11 @@ def run_quiz_mode():
     print(f"{BOLD}[1/3] EXPLICACION DEL TEMA{RESET}")
     print(f"{GRAY}{'─'*58}{RESET}")
     input(f"{GRAY}  Presiona Enter para que RAPIRO explique el tema...{RESET}")
+    rapiro_action("LED azul parpadeante + cabeza inclinada (pensando)")
     print()
 
     explanation = tutor.explain_with_example("fotosintesis")
+    rapiro_action("LED azul fijo + mira al estudiante (explicando)")
     print(explanation)
     print()
 
@@ -262,6 +268,7 @@ def run_quiz_mode():
     print(f"{BOLD}[2/3] QUIZ - Vamos a ver cuanto entendiste{RESET}")
     print(f"{GRAY}{'─'*58}{RESET}")
     input(f"{GRAY}  Presiona Enter para generar las preguntas...{RESET}")
+    rapiro_action("LED azul parpadeante + cabeza inclinada (generando quiz)")
     print(f"\n{GRAY}  Generando preguntas con Claude...{RESET}\n")
 
     quiz = tutor.generate_quiz("fotosintesis", n_questions=3)
@@ -275,6 +282,7 @@ def run_quiz_mode():
     # ------------------------------------------------------------------
     results = []
     for i, q in enumerate(quiz.questions):
+        rapiro_action("LED blanco + inclinado hacia adelante (esperando respuesta)")
         print(f"{BOLD}Pregunta {i+1}/{len(quiz.questions)}:{RESET}")
         print(f"  {q.question}\n")
         for letter, option in q.options.items():
@@ -292,8 +300,10 @@ def run_quiz_mode():
 
         if result.is_correct:
             print(f"\n  {GREEN}{BOLD}CORRECTO!{RESET}")
+            rapiro_action("LED verde x3 destellos + levanta brazos (celebrando)")
         else:
             print(f"\n  {RED}{BOLD}INCORRECTO. La respuesta era {q.correct}{RESET}")
+            rapiro_action("LED amarillo + inclina cabeza suavemente (con empatia)")
 
         print(f"\n  {result.feedback}\n")
         print(f"{GRAY}{'─'*58}{RESET}\n")
@@ -311,12 +321,16 @@ def run_quiz_mode():
     print(f"\n  Puntaje: {color}{BOLD}{correct}/{total} ({pct:.0f}%){RESET}\n")
 
     if pct == 100:
+        rapiro_action("LED verde x5 destellos + pose de celebracion (100%!)")
         print(f"  {GREEN}Perfecto! Dominaste el tema.{RESET}")
     elif pct >= 70:
+        rapiro_action("LED verde x5 destellos + levanta brazos (gran resultado)")
         print(f"  {GREEN}Muy bien! Repasa los errores para llegar al 100%.{RESET}")
     elif pct >= 40:
+        rapiro_action("LED amarillo + asiente lentamente (alentando)")
         print(f"  {YELLOW}Buen intento. Te recomiendo releer la explicacion.{RESET}")
     else:
+        rapiro_action("LED azul fijo + mira al estudiante (apoyo y motivacion)")
         print(f"  {RED}Necesitas repasar. Usa la opcion de explicacion nuevamente.{RESET}")
 
     print()

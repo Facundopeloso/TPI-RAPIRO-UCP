@@ -95,11 +95,23 @@ class IntelligentTutor:
       generate_quiz()       — genera preguntas multiple choice del documento
       evaluate_answer()     — corrige respuesta y da feedback personalizado
       study_session()       — flujo completo: explicación → quiz → puntaje
+
+    Acepta rapiro: RAPIROController opcional para reacciones físicas del robot.
+    Si rapiro es None, el tutor funciona igual pero sin actuación física.
     """
 
-    def __init__(self, document_processor: DocumentProcessor):
+    def __init__(self, document_processor: DocumentProcessor, rapiro=None):
         self._doc = document_processor
+        self._rapiro = rapiro
         self._client = self._init_client()
+
+    def _r(self, method: str, *args, **kwargs) -> None:
+        """Llama a un método del RAPIROController si está disponible."""
+        if self._rapiro is not None:
+            try:
+                getattr(self._rapiro, method)(*args, **kwargs)
+            except Exception as exc:
+                logger.debug("Error en reacción RAPIRO '%s': %s", method, exc)
 
     # ------------------------------------------------------------------
     # Inicialización
@@ -149,6 +161,7 @@ class IntelligentTutor:
         if not self._doc.chunks:
             return "No hay documento cargado. Por favor, carga tu material de estudio."
 
+        self._r("react_thinking")           # pensando la respuesta
         ctx = self._context(question)
         user_msg = (
             f"Material de estudio:\n\n{ctx}\n\n"
@@ -157,6 +170,7 @@ class IntelligentTutor:
             "Incluye al menos un ejemplo de la vida cotidiana si aplica."
         )
         result = self._call(SYSTEM_TUTOR, user_msg)
+        self._r("react_explaining")         # mira al estudiante mientras responde
         return result or "No pude generar una respuesta. Intentá de nuevo."
 
     # ------------------------------------------------------------------
@@ -171,6 +185,7 @@ class IntelligentTutor:
         if not self._available():
             return "Tutor no disponible."
 
+        self._r("react_thinking")           # pose de pensar mientras genera
         ctx = self._context(topic, top_k=5)
         user_msg = (
             f"Material de estudio:\n\n{ctx}\n\n"
@@ -184,6 +199,7 @@ class IntelligentTutor:
             "5. DATO CLAVE: una sola oración para recordar el concepto central\n"
         )
         result = self._call(SYSTEM_TUTOR, user_msg, max_tokens=800)
+        self._r("react_explaining")         # azul + mira usuario al dar la explicación
         return result or f"No pude generar explicación sobre '{topic}'."
 
     # ------------------------------------------------------------------
@@ -223,6 +239,7 @@ class IntelligentTutor:
             "- Devuelve SOLO el JSON, sin texto adicional"
         )
 
+        self._r("react_thinking")           # pose pensar mientras Claude genera
         raw = self._call(SYSTEM_QUIZ, user_msg, max_tokens=1200)
         quiz.questions = self._parse_quiz_json(raw)
 
@@ -230,6 +247,7 @@ class IntelligentTutor:
             logger.error("No se pudo parsear el quiz generado.")
         else:
             logger.info("Quiz generado: %d preguntas sobre '%s'.", len(quiz.questions), topic)
+            self._r("react_nod")            # asiente: quiz listo
 
         return quiz
 
@@ -274,6 +292,12 @@ class IntelligentTutor:
         """
         sa = student_answer.upper().strip()
         is_correct = sa == question.correct
+
+        # Reacción física inmediata (antes de generar feedback con LLM)
+        if is_correct:
+            self._r("react_correct_answer")
+        else:
+            self._r("react_wrong_answer")
 
         if not self._available():
             feedback = (
@@ -321,10 +345,11 @@ class IntelligentTutor:
 
     def study_session(self, topic: str, n_questions: int = 3) -> dict:
         """
-        Flujo de estudio completo:
-          1. Explicación con ejemplos reales del tema
-          2. Quiz de n_questions preguntas
-          3. Retorna diccionario listo para presentar
+        Flujo de estudio completo con reacciones físicas de RAPIRO:
+          1. Azul + mirar usuario: inicio de sesión
+          2. Pensar + explicar: explain_with_example
+          3. Pensar + asentir: generate_quiz
+          4. Retorna diccionario listo para presentar
 
         Returns:
             {
@@ -334,8 +359,10 @@ class IntelligentTutor:
             }
         """
         logger.info("Iniciando sesion de estudio: '%s' (%d preguntas).", topic, n_questions)
+        self._r("react_explaining")         # inicio: azul, mira al estudiante
         explanation = self.explain_with_example(topic)
         quiz = self.generate_quiz(topic, n_questions)
+        self._r("react_asking_question")    # blanco: quiz listo, esperando
         return {
             "topic": topic,
             "explanation": explanation,
@@ -347,7 +374,8 @@ class IntelligentTutor:
     # ------------------------------------------------------------------
 
     def speak(self, text: str) -> None:
-        """Sintetiza texto en audio y lo reproduce."""
+        """Sintetiza texto en audio y lo reproduce. RAPIRO mira al usuario mientras habla."""
+        self._r("react_speaking")           # azul + mira usuario durante TTS
         try:
             import io
             import pygame
