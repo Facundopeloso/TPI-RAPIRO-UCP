@@ -178,16 +178,30 @@ def main(camera_index: int):
         elif key == ord("s"):
             print_stats(counts)
         elif key == ord("x"):
-            cv2.destroyAllWindows()
-            confirm = input("\n  !! Borrar TODAS las fotos locales? (s/n): ").strip().lower()
-            if confirm == "s":
-                clear_dataset()
-                counts = count_images()
-                last_saved = ""
-                print("  Dataset limpio.")
-            else:
-                print("  Cancelado.")
-            cv2.namedWindow("RAPIRO Dataset Collector")
+            # Mostrar overlay de confirmacion en la misma ventana
+            confirming = True
+            while confirming:
+                ret2, frame2 = cap.read()
+                if not ret2:
+                    frame2 = frame.copy()
+                overlay = frame2.copy()
+                cv2.rectangle(overlay, (0, 0), (frame2.shape[1], frame2.shape[0]), (0, 0, 0), -1)
+                cv2.addWeighted(overlay, 0.6, frame2, 0.4, 0, frame2)
+                cv2.putText(frame2, "!! BORRAR todas las fotos locales?", (30, frame2.shape[0]//2 - 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                cv2.putText(frame2, "S = Si, borrar     N = No, cancelar", (30, frame2.shape[0]//2 + 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.imshow("RAPIRO Dataset Collector", frame2)
+                confirm_key = cv2.waitKey(30) & 0xFF
+                if confirm_key == ord("s"):
+                    clear_dataset()
+                    counts = count_images()
+                    last_saved = ""
+                    print("  Dataset limpio.")
+                    confirming = False
+                elif confirm_key == ord("n") or confirm_key == 27:  # 27 = Esc
+                    print("  Cancelado.")
+                    confirming = False
         elif key in (ord("0"), ord("1"), ord("2"), ord("3"), ord("4")):
             class_id = key - ord("0")
             path = save_image(frame, class_id)
