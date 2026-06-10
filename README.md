@@ -17,233 +17,192 @@ Sistema inteligente de monitoreo conductual y tutoria adaptativa basado en el ro
 
 ## Descripcion
 
-RAPIRO Guardian detecta en tiempo real si un estudiante esta concentrado, usando el celular o ausente, usando vision por computadora sobre Raspberry Pi 4. Segun la situacion, actua fisicamente (LEDs, servos), registra eventos en AWS y ofrece asistencia tutorial mediante un LLM contextualizado al material de estudio del usuario.
+RAPIRO Guardian detecta en tiempo real el estado conductual del estudiante usando vision por computadora sobre Raspberry Pi 4. Segun la situacion, el robot reacciona fisicamente (LEDs RGB + 12 servos), registra eventos en AWS y ofrece asistencia tutorial adaptativa mediante Claude Haiku (Anthropic) contextualizado al material de estudio.
 
----
+### Que detecta
 
-## Red Neuronal — Arquitectura CNN
-
-### Tipo de red: MobileNetV2 (CNN con Transfer Learning)
-
-El clasificador es una **Red Neuronal Convolucional (CNN)** basada en la arquitectura **MobileNetV2**, entrenada con la tecnica de **Transfer Learning** (aprendizaje por transferencia) desde pesos pre-entrenados en ImageNet.
-
-### Por que MobileNetV2
-
-MobileNetV2 fue disenada especificamente para dispositivos con recursos limitados (moviles, embebidos). Sus ventajas frente a otras arquitecturas:
-
-| Caracteristica | MobileNetV2 | ResNet50 | VGG16 |
-|---|---|---|---|
-| Parametros totales | ~3.4M | ~25M | ~138M |
-| Tamano modelo float32 | ~14 MB | ~98 MB | ~528 MB |
-| Tamano modelo INT8 | ~3.5 MB | ~25 MB | ~135 MB |
-| Latencia en RPi 4 (est.) | ~150-250 ms | >1000 ms | >3000 ms |
-| Accuracy ImageNet Top-1 | 72% | 76% | 71% |
-
-Para Raspberry Pi 4 con procesamiento a 2 FPS, MobileNetV2 es la unica opcion practica entre las CNNs preentrenadas de alta calidad.
-
-### Componentes clave de MobileNetV2
-
-**Depthwise Separable Convolutions:**
-La operacion principal de MobileNetV2 separa la convolucion estandar en dos pasos:
-1. Convolucion depthwise: aplica un filtro por cada canal de entrada (espacial)
-2. Convolucion pointwise (1x1): combina los canales resultantes
-
-Esto reduce operaciones de multiplicacion-acumulacion en ~8-9x respecto a una convolucion estandar, manteniendo capacidad representacional similar.
-
-**Inverted Residuals con Linear Bottlenecks:**
-Cada bloque MobileNetV2 expande los canales (factor 6x), aplica la convolucion depthwise, y luego contrae de vuelta. La conexion residual se aplica solo cuando entrada y salida tienen la misma forma, permitiendo gradientes fluir sin degradarse en redes profundas.
-
-### Arquitectura completa del clasificador
-
-```
-Input: imagen BGR 224x224x3 (uint8)
-    |
-Preprocessing: normalize [0,1] float32, BGR->RGB
-    |
-MobileNetV2 base (155 capas, ImageNet weights)
-    Capa 1:   Conv2D 32 filtros 3x3, stride 2  -> 112x112x32
-    ...
-    Bloques:  17 inverted residual blocks
-    ...
-    Ultima:   Conv2D 1280 filtros 1x1           ->   7x7x1280
-    |
-GlobalAveragePooling2D                          ->   1280
-    |
-Dense(256, activation='relu')                  ->   256
-    |
-Dropout(0.4)
-    |
-Dense(3, activation='softmax')                 ->   3
-    |
-Output: [P(estudiando), P(celular), P(ausente)]
-```
-
-**Parametros totales:** ~3.4M
-**Parametros entrenables fase 1 (solo cabeza):** ~330K
-**Parametros entrenables fase 2 (fine-tuning):** ~330K + ultimas 30 capas base
-
-### Transfer Learning — dos fases
-
-**Fase 1 — Feature extraction:**
-- Base MobileNetV2 completamente congelada (pesos de ImageNet intocados)
-- Solo se entrena la cabeza custom (Dense 256 + Dense 3)
-- Learning rate: 1e-3 (Adam)
-- El base actua como extractor de features generales (bordes, texturas, formas)
-
-**Fase 2 — Fine-tuning (opcional, flag `--fine-tune`):**
-- Se descongelan las ultimas 30 capas del base
-- Learning rate reducido: 1e-5 (no destruir features aprendidas)
-- Permite que el modelo adapte features de alto nivel a las imagenes del dominio especifico (estudiante en escritorio)
-
-### Cuantizacion INT8
-
-Para despliegue en Raspberry Pi 4 se aplica **Post-Training Integer Quantization (PTQ)**:
-
-```
-Proceso:
-  1. Modelo entrenado float32
-  2. Se pasan 200 imagenes representativas por el modelo
-  3. Calibracion: se miden rangos min/max de activaciones por capa
-  4. Mapeo: float32 -> int8  usando escala y zero_point por tensor
-  5. Pesos y activaciones: todos en int8
-
-Resultado:
-  - Tamano: ~4x menor (float32 a int8)
-  - Velocidad: ~2-3x mas rapido en ARM Cortex-A72 (RPi 4)
-  - Precision: caida tipica < 1% accuracy vs float32
-  - Formato: .tflite (TensorFlow Lite)
-```
-
-### Clases del clasificador
-
-| ID | Nombre | Descripcion | Accion RAPIRO |
-|---|---|---|---|
-| 0 | Estudiando | Persona mirando libros/pantalla | LED verde, servo neutro |
-| 1 | Usando celular | Persona mirando/sosteniendo celular | LED amarillo, sacude cabeza |
-| 2 | Puesto vacio | Silla desocupada o persona ausente | LED rojo, pose de alerta |
-
-### Dataset recomendado
-
-| Clase | Cantidad minima | Descripcion |
+| Clase | Estado | Reaccion RAPIRO |
 |---|---|---|
-| 0 Estudiando | 200 imagenes | Persona leyendo, escribiendo, frente a pantalla |
-| 1 Usando celular | 200 imagenes | Celular visible, persona mirando hacia abajo |
-| 2 Puesto vacio | 200 imagenes | Silla vacia, persona de espaldas, fuera de cuadro |
-
-**Variabilidad recomendada:** distintas personas, iluminaciones (dia/noche/artificial), angulos de camara, fondos y ropa.
-
-### Data Augmentation
-
-Durante entrenamiento se aplican estas transformaciones aleatorias para aumentar la variabilidad efectiva del dataset:
-
-```python
-rotation_range    = 15      # rotacion +/- 15 grados
-width_shift       = 0.1     # desplazamiento horizontal 10%
-height_shift      = 0.1     # desplazamiento vertical 10%
-zoom_range        = 0.15    # zoom in/out 15%
-horizontal_flip   = True    # espejado horizontal
-brightness_range  = [0.7, 1.3]  # variacion de brillo
-shear_range       = 0.1     # deformacion de corte
-```
-
-### Metricas objetivo
-
-| Metrica | Meta | Descripcion |
-|---|---|---|
-| Val Accuracy | >= 85% | Precision en conjunto de validacion |
-| Latencia inferencia | <= 500 ms | Tiempo total por frame en RPi 4 |
-| Tamano modelo INT8 | ~3.5 MB | Espacio en microSD |
-| Confianza minima | 70% | Umbral para actuar (evita falsos positivos) |
+| 0 | Estudiando / concentrado | LED verde, servo neutro |
+| 1 | Usando celular | LED amarillo, sacude cabeza |
+| 2 | Puesto vacio / ausente | LED rojo, pose de alerta |
+| 3 | Confundido | LED azul x2 flash, inclina cabeza — re-explica |
+| 4 | Aburrido | LED amarillo, sacude cabeza — genera quiz |
 
 ---
 
-## Estructura del Proyecto
+## Guia de Ejecucion Paso a Paso
 
-```
-rapiro_guardian/
-|
-+-- src/
-|   +-- perception/          # Captura de video (OpenCV)
-|   |   +-- camera.py
-|   |
-|   +-- classification/      # CNN TFLite — clasificacion de estados
-|   |   +-- classifier.py    # StudentClassifier, ClassificationResult
-|   |   +-- preprocessor.py  # resize 224x224, normalize [0,1]
-|   |
-|   +-- actuation/           # Control fisico del robot RAPIRO
-|   |   +-- led_controller.py    # LEDs RGB via GPIO (BCM)
-|   |   +-- servo_controller.py  # 12 servos via serial Arduino
-|   |   +-- rapiro.py            # Facade principal
-|   |
-|   +-- tutoring/            # Modulo de tutoria inteligente (LLM + RAG)
-|   |   +-- document_processor.py   # carga PDF/TXT, TF-IDF retrieval
-|   |   +-- tutor.py                # OpenAI GPT-3.5 Turbo
-|   |
-|   +-- cloud/               # Integracion AWS
-|       +-- iot_publisher.py     # MQTT IoT Core con throttling
-|
-+-- scripts/
-|   +-- collect_dataset.py   # Captura imagenes para dataset (webcam)
-|   +-- train_model.py       # Entrena MobileNetV2, exporta TFLite INT8
-|
-+-- tests/
-|   +-- test_classifier.py   # 6 tests unitarios (todos passing)
-|
-+-- terraform/               # IaC AWS
-|   +-- main.tf
-|
-+-- dataset/                 # Imagenes de entrenamiento (no en git)
-|   +-- class_0/             # Estudiando
-|   +-- class_1/             # Usando celular
-|   +-- class_2/             # Puesto vacio
-|
-+-- models/                  # Modelo entrenado (no en git)
-|   +-- mobilenetv2_int8.tflite
-|
-+-- config/
-|   +-- settings.py          # Configuracion centralizada
-|
-+-- main.py                  # Pipeline principal
-+-- demo.py                  # Demo sin hardware real
-+-- requirements.txt
-+-- .env.example
-```
+### Requisitos previos
+
+- Python 3.10+
+- Git
+- Webcam (para recolectar dataset)
+- Cuenta de Google (para Drive + Colab)
 
 ---
 
-## Instalacion
+### PASO 1 — Clonar el repositorio
 
 ```bash
-# 1. Clonar
 git clone git@github.com:Facundopeloso/TPI-RAPIRO-UCP.git
 cd TPI-RAPIRO-UCP
-
-# 2. Entorno virtual
-python3 -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
-
-# 3. Dependencias
-pip install -r requirements.txt
-
-# 4. Variables de entorno
-cp .env.example .env
-# Editar .env con credenciales AWS, puerto serial, etc.
 ```
 
 ---
 
-## Entrenar el modelo
+### PASO 2 — Entorno virtual e instalacion de dependencias
 
 ```bash
-# Paso 1: recolectar dataset (webcam)
-python scripts/collect_dataset.py
-# Teclas: [0] Estudiando  [1] Celular  [2] Ausente  [q] Salir
-# Meta: 200+ imagenes por clase
+# Crear entorno virtual
+python -m venv venv
 
-# Paso 2: entrenar (solo cabeza, 15 epochs)
+# Activar (Windows)
+venv\Scripts\activate
+
+# Activar (Linux / Mac / Raspberry Pi)
+source venv/bin/activate
+
+# Instalar dependencias
+pip install -r requirements.txt
+```
+
+---
+
+### PASO 3 — Configurar variables de entorno
+
+```bash
+# Windows
+copy .env.example .env
+
+# Linux / Mac
+cp .env.example .env
+```
+
+Abrir `.env` y completar la unica variable obligatoria para el demo:
+
+```env
+ANTHROPIC_API_KEY=sk-ant-api03-TU_KEY_REAL_ACA
+```
+
+Obtener la key en: https://console.anthropic.com/settings/keys
+
+> El resto de las variables (AWS, hardware) solo son necesarias en Raspberry Pi con hardware real.
+
+---
+
+### PASO 4 — Verificar que todo funciona
+
+```bash
+python -m pytest tests/ -v
+```
+
+Deben salir **6/6 PASSED**. Si falla alguno, revisar la instalacion de dependencias.
+
+---
+
+### PASO 5 — Probar el demo (sin hardware)
+
+#### 5a. Clasificador con deteccion simulada
+
+```bash
+python demo.py --no-cam
+```
+
+Ver las 5 clases con acciones `[RAPIRO]` en consola. Detener con `Ctrl+C`.
+
+#### 5b. Forzar una clase especifica
+
+```bash
+python demo.py --no-cam --class 0   # Estudiando
+python demo.py --no-cam --class 1   # Celular
+python demo.py --no-cam --class 2   # Ausente
+python demo.py --no-cam --class 3   # Confundido
+python demo.py --no-cam --class 4   # Aburrido
+```
+
+#### 5c. Modo tutor interactivo con quiz (requiere ANTHROPIC_API_KEY)
+
+```bash
+python demo.py --quiz
+```
+
+Flujo:
+1. Presionar Enter → RAPIRO explica el tema con ejemplos reales
+2. Presionar Enter → genera 3 preguntas multiple choice
+3. Responder A/B/C/D a cada pregunta
+4. Ver feedback personalizado y puntaje final
+
+---
+
+### PASO 6 — Recolectar dataset con la webcam
+
+```bash
+python scripts/collect_dataset.py
+```
+
+Controles dentro de la ventana:
+
+| Tecla | Accion |
+|---|---|
+| `0` | Guardar foto — Estudiando |
+| `1` | Guardar foto — Usando celular |
+| `2` | Guardar foto — Puesto vacio |
+| `3` | Guardar foto — Confundido (ceno fruncido, mano en barbilla) |
+| `4` | Guardar foto — Aburrido (postura caida, mirada perdida) |
+| `s` | Ver estadisticas del dataset actual |
+| `x` | Limpiar todas las fotos locales (pide confirmacion) |
+| `q` | Salir |
+
+**Meta minima:** 150 fotos por clase = 750 total.
+
+**Variabilidad recomendada:** distintas personas, iluminaciones, angulos, fondos.
+
+#### Subir fotos automaticamente a Google Drive
+
+Setup unico (una sola vez):
+
+1. Ir a https://console.cloud.google.com
+2. Crear proyecto → buscar **Google Drive API** → Habilitar
+3. `Credenciales > + Crear credencial > OAuth 2.0 > App de escritorio`
+4. Descargar JSON → renombrar a `credentials.json` → poner en la raiz del proyecto
+5. Compartir ese `credentials.json` con los compañeros de equipo (por WhatsApp/Discord)
+
+Uso diario:
+
+```bash
+python scripts/collect_dataset.py --upload
+```
+
+Al presionar `q`:
+- Sube automaticamente solo las fotos nuevas a las carpetas de Drive
+- La primera vez abre el navegador para autorizar con tu cuenta de Google
+- Las siguientes veces funciona sin intervencion
+
+Carpetas en Drive: https://drive.google.com/drive/folders/1ULuPEGf_U_qH5OwrI1ps8kk1pHdq8mrP
+
+---
+
+### PASO 7 — Entrenar la red neuronal en Google Colab
+
+1. Abrir https://colab.research.google.com
+2. `Archivo > Abrir > Google Drive` → seleccionar `notebooks/train_colab.ipynb`
+3. `Entorno de ejecucion > Cambiar tipo de entorno > GPU T4`
+4. `Entorno de ejecucion > Ejecutar todo`
+5. Autorizar acceso a Drive cuando lo pida
+6. Al finalizar, el modelo `.tflite` se guarda en `Mi Drive/RAPIRO_models/`
+
+**Tiempo estimado:** 5-10 minutos con GPU T4.
+
+**Accuracy esperada:** >85% con 150 imgs/clase, >92% con 300+ imgs/clase.
+
+#### Alternativa: entrenar localmente (lento, sin GPU)
+
+```bash
+# Solo cabeza (rapido, menos accuracy)
 python scripts/train_model.py
 
-# Paso 3: entrenar con fine-tuning (mejor accuracy)
+# Con fine-tuning (mejor accuracy, mas tiempo)
 python scripts/train_model.py --epochs 20 --fine-tune
 
 # Salida: models/mobilenetv2_int8.tflite
@@ -251,39 +210,205 @@ python scripts/train_model.py --epochs 20 --fine-tune
 
 ---
 
-## Demo (sin hardware)
+### PASO 8 — Copiar modelo a Raspberry Pi
+
+Bajar `mobilenetv2_int8.tflite` de `Mi Drive/RAPIRO_models/` y copiarlo:
 
 ```bash
-# Demo con clasificador simulado
-python demo.py --no-cam
-
-# Demo con webcam real
-python demo.py
-
-# Forzar clase fija
-python demo.py --no-cam --class 1   # siempre "usando celular"
+scp mobilenetv2_int8.tflite pi@<IP_RAPIRO>:~/TPI-RAPIRO-UCP/models/
 ```
+
+---
+
+### PASO 9 — Ejecutar sistema completo (Raspberry Pi con hardware)
+
+```bash
+# Sin AWS (recomendado para desarrollo)
+python main.py --no-cloud
+
+# Con documento para el tutor
+python main.py --no-cloud --document apuntes.pdf
+
+# Con AWS IoT
+python main.py
+```
+
+Hotword para activar el tutor por voz: decir **"RAPIRO ayuda"**
 
 ---
 
 ## Tests
 
 ```bash
-# Correr tests unitarios
+# Tests unitarios
 python -m pytest tests/ -v
 
-# Con cobertura
+# Con cobertura de codigo
 python -m pytest tests/ --cov=src --cov-report=term-missing
 ```
 
 ---
 
-## Ejecutar el sistema completo
+## Red Neuronal — Arquitectura CNN
 
-```bash
-python main.py                  # Pipeline completo
-python main.py --no-cloud       # Sin AWS
-python main.py --demo           # Sin hardware real
+### Tipo: MobileNetV2 con Transfer Learning
+
+CNN basada en **MobileNetV2**, entrenada con **Transfer Learning** desde pesos pre-entrenados en ImageNet.
+
+### Por que MobileNetV2
+
+| Caracteristica | MobileNetV2 | ResNet50 | VGG16 |
+|---|---|---|---|
+| Parametros totales | ~3.4M | ~25M | ~138M |
+| Tamano modelo INT8 | ~3.5 MB | ~25 MB | ~135 MB |
+| Latencia en RPi 4 | ~150-250 ms | >1000 ms | >3000 ms |
+
+### Arquitectura completa
+
+```
+Input: imagen 224x224x3
+    |
+Preprocessing: normalize [0,1] float32, BGR -> RGB
+    |
+MobileNetV2 base (155 capas, ImageNet weights, frozen en fase 1)
+    |
+GlobalAveragePooling2D  ->  vector 1280
+    |
+Dense(256, relu)
+    |
+Dropout(0.4)
+    |
+Dense(5, softmax)
+    |
+Output: [P(estudiando), P(celular), P(ausente), P(confundido), P(aburrido)]
+```
+
+### Transfer Learning — dos fases
+
+**Fase 1 — Feature extraction:**
+- Base MobileNetV2 congelada (pesos de ImageNet intactos)
+- Solo se entrena la cabeza custom
+- Learning rate: 1e-3 (Adam)
+
+**Fase 2 — Fine-tuning (flag `--fine-tune`):**
+- Se descongelan las ultimas 30 capas del base
+- Learning rate: 1e-5 (preserva features aprendidos)
+
+### Cuantizacion INT8
+
+Para despliegue en Raspberry Pi 4:
+
+```
+Modelo float32  ->  calibracion con 200 imagenes  ->  modelo INT8
+Resultado: 4x menor tamano, 2-3x mas rapido en ARM Cortex-A72
+Precision: caida tipica < 1% accuracy
+```
+
+### Dataset
+
+| Clase | Meta | Poses sugeridas |
+|---|---|---|
+| 0 Estudiando | 150 imgs | Leyendo, escribiendo, frente a pantalla |
+| 1 Usando celular | 150 imgs | Celular visible, mirando hacia abajo |
+| 2 Puesto vacio | 150 imgs | Silla vacia, fuera de cuadro |
+| 3 Confundido | 150 imgs | Ceno fruncido, mano en barbilla o mejilla |
+| 4 Aburrido | 150 imgs | Cabeza apoyada en mano, postura encorvada |
+
+---
+
+## Reacciones fisicas de RAPIRO
+
+### Clasificador
+
+| Clase detectada | LED | Servo |
+|---|---|---|
+| Estudiando | Verde solido | Neutro |
+| Celular | Amarillo solido | Sacude cabeza |
+| Ausente | Rojo solido | Pose de alerta |
+| Confundido | Azul x2 flash | Inclina cabeza (think) |
+| Aburrido | Amarillo solido | Sacude cabeza |
+
+### Tutor LLM
+
+| Momento | LED | Servo |
+|---|---|---|
+| Procesando / pensando | Azul parpadeante | Inclina cabeza |
+| Explicando tema | Azul solido | Mira al estudiante |
+| Haciendo pregunta | Blanco solido | Postura de escucha |
+| Respuesta correcta | Verde x3 destellos | Levanta brazos (celebra) |
+| Respuesta incorrecta | Amarillo solido | Inclina cabeza con empatia |
+| Score >= 70% | Verde x5 destellos | Celebracion completa |
+| Score 40-69% | Amarillo solido | Asiente (alienta) |
+| Score < 40% | Azul solido | Mira al estudiante (apoyo) |
+
+### Voz
+
+| Momento | LED | Servo |
+|---|---|---|
+| Esperando hotword | Azul pulsante | Neutro |
+| Hotword detectado | Azul brillante | Mira al estudiante |
+
+---
+
+## Estructura del proyecto
+
+```
+TPI-RAPIRO-UCP/
+|
++-- src/
+|   +-- perception/
+|   |   +-- camera.py                  # Captura OpenCV
+|   |
+|   +-- classification/
+|   |   +-- classifier.py              # StudentClassifier TFLite
+|   |   +-- preprocessor.py           # Resize 224x224, normalize
+|   |
+|   +-- actuation/
+|   |   +-- led_controller.py         # LEDs RGB via GPIO
+|   |   +-- servo_controller.py       # 12 servos via serial Arduino
+|   |   +-- rapiro.py                 # Facade principal del robot
+|   |
+|   +-- tutoring/
+|   |   +-- document_processor.py     # PDF/TXT loader, TF-IDF retrieval
+|   |   +-- tutor.py                  # Claude Haiku, quiz, evaluacion
+|   |   +-- voice_listener.py         # Hotword + STT
+|   |
+|   +-- cloud/
+|   |   +-- iot_publisher.py          # MQTT AWS IoT Core
+|   |
+|   +-- dashboard/
+|       +-- api.py                    # FastAPI REST dashboard
+|
++-- scripts/
+|   +-- collect_dataset.py            # Captura webcam + upload a Drive
+|   +-- train_model.py                # Entrena localmente
+|
++-- notebooks/
+|   +-- train_colab.ipynb             # Entrena en Google Colab con GPU
+|
++-- tests/
+|   +-- test_classifier.py            # 6 tests unitarios
+|
++-- terraform/                        # IaC AWS
+|   +-- main.tf
+|
++-- dataset/                          # Fotos de entrenamiento (no en git)
+|   +-- class_0/                      # Estudiando
+|   +-- class_1/                      # Usando celular
+|   +-- class_2/                      # Puesto vacio
+|   +-- class_3/                      # Confundido
+|   +-- class_4/                      # Aburrido
+|
++-- models/                           # Modelo entrenado (no en git)
+|   +-- mobilenetv2_int8.tflite
+|
++-- config/
+|   +-- settings.py                   # Configuracion centralizada
+|
++-- main.py                           # Pipeline principal
++-- demo.py                           # Demo sin hardware
++-- requirements.txt
++-- .env.example
 ```
 
 ---
@@ -295,9 +420,8 @@ python main.py --demo           # Sin hardware real
 | IoT Core | MQTT desde Raspberry Pi | ~$0.08 |
 | Lambda | Procesamiento de eventos | $0 (free tier) |
 | DynamoDB | Almacenamiento de sesiones | $0 (free tier) |
-| S3 | Documentos de usuario | ~$0.12 |
+| S3 | Documentos de usuario para tutor | ~$0.12 |
 | CloudWatch | Logs y dashboards | ~$0.50 |
-| API Gateway | REST API dashboard | $0 (free tier) |
 | **TOTAL** | | **~$1.70/mes** |
 
 ```bash
@@ -308,33 +432,16 @@ terraform apply
 
 ---
 
-## Variables de Entorno
+## Variables de entorno
 
 Ver `.env.example`. Variables criticas:
 
 ```env
-AWS_IOT_ENDPOINT=xxxxx.iot.us-east-1.amazonaws.com
-AWS_REGION=us-east-1
-OPENAI_API_KEY=sk-...
-SERIAL_PORT=/dev/ttyUSB0
-CAMERA_INDEX=0
+ANTHROPIC_API_KEY=sk-ant-api03-...     # LLM tutor (obligatoria para demo)
 MODEL_PATH=models/mobilenetv2_int8.tflite
 MIN_CONFIDENCE=0.70
-```
-
----
-
-## Flujo Principal
-
-```
-Camara -> Preprocesamiento -> Clasificador TFLite CNN
-                                    |
-          +-------------------------+-------------------------+
-       Clase 0                  Clase 1                 Clase 2
-     (Estudiando)             (Celular)               (Ausente)
-     LED verde                LED amarillo             LED rojo
-     Servo neutro             Mueve cabeza             Alerta sonora
-     Log AWS                  Alerta AWS               Alerta + SNS
+AWS_IOT_ENDPOINT=xxx.iot.sa-east-1.amazonaws.com  # solo Raspberry Pi
+SERIAL_PORT=/dev/ttyUSB0                           # solo Raspberry Pi
 ```
 
 ---
@@ -344,5 +451,5 @@ Camara -> Preprocesamiento -> Clasificador TFLite CNN
 - Howard, A. et al. (2017). *MobileNets: Efficient Convolutional Neural Networks for Mobile Vision Applications*. arXiv:1704.04861
 - Sandler, M. et al. (2018). *MobileNetV2: Inverted Residuals and Linear Bottlenecks*. CVPR 2018
 - Jacob, B. et al. (2018). *Quantization and Training of Neural Networks for Efficient Integer-Arithmetic-Only Inference*. CVPR 2018
-- IEEE Survey on Robotic Tutoring Systems (2022)
 - TensorFlow Lite documentation: Post-training integer quantization
+- Anthropic Claude API documentation
