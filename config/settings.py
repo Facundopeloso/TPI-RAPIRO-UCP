@@ -31,17 +31,21 @@ DO_NOT_DISTURB_DURATION_SEC = int(os.getenv("DO_NOT_DISTURB_DURATION_SEC", "600"
 # ---------------------------------------------------------------------------
 MODEL_PATH = os.getenv("MODEL_PATH", "models/mobilenetv2_int8.tflite")
 INPUT_SIZE = (224, 224)
-NUM_CLASSES = 3
+NUM_CLASSES = 5
 MIN_CONFIDENCE = float(os.getenv("MIN_CONFIDENCE", "0.70"))
 
 # Clases del clasificador
 CLASS_STUDYING = 0
-CLASS_PHONE = 1
-CLASS_ABSENT = 2
+CLASS_PHONE    = 1
+CLASS_ABSENT   = 2
+CLASS_CONFUSED = 3
+CLASS_BORED    = 4
 CLASS_LABELS = {
     CLASS_STUDYING: "Estudiando",
-    CLASS_PHONE: "Usando celular",
-    CLASS_ABSENT: "Puesto vacío",
+    CLASS_PHONE:    "Usando celular",
+    CLASS_ABSENT:   "Puesto vacío",
+    CLASS_CONFUSED: "Confundido",
+    CLASS_BORED:    "Aburrido",
 }
 
 # ---------------------------------------------------------------------------

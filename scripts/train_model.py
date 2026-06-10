@@ -33,8 +33,8 @@ SAVED_MODEL = os.path.join(MODELS_DIR, "mobilenetv2_saved")
 PLOTS_DIR   = os.path.join(ROOT, "models", "plots")
 
 IMG_SIZE    = (224, 224)
-NUM_CLASSES = 3
-CLASS_NAMES = ["Estudiando", "Usando celular", "Puesto vacio"]
+NUM_CLASSES = 5
+CLASS_NAMES = ["Estudiando", "Usando celular", "Puesto vacio", "Confundido", "Aburrido"]
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +109,7 @@ def build_model(fine_tune_layers: int = 0):
             |
         Dense(NUM_CLASSES, activation='softmax')
             |
-        Output (3,)  [P(estudiando), P(celular), P(ausente)]
+        Output (5,)  [P(estudiando), P(celular), P(ausente), P(confundido), P(aburrido)]
 
     Parámetros totales:    ~3.4M
     Parámetros entrenables (fase 1): ~330K (solo cabeza)

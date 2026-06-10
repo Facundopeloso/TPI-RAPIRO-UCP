@@ -14,7 +14,10 @@ import signal
 import sys
 import time
 
-from config.settings import LOG_LEVEL, LOG_FORMAT, ABSENCE_ALERT_THRESHOLD_SEC, CLASS_ABSENT
+from config.settings import (
+    LOG_LEVEL, LOG_FORMAT, ABSENCE_ALERT_THRESHOLD_SEC,
+    CLASS_ABSENT, CLASS_CONFUSED, CLASS_BORED,
+)
 from src.perception.camera import CameraCapture
 from src.classification.classifier import StudentClassifier
 from src.actuation.rapiro import RAPIROController
@@ -88,6 +91,18 @@ def main() -> None:
                 continue
 
             rapiro.react(result.class_id)
+
+            # Reacciones adaptativas: confundido → re-explica, aburrido → quiz
+            if result.class_id == CLASS_CONFUSED and tutor._available():
+                logger.info("Estudiante confundido — RAPIRO re-explica.")
+                topic = "el tema actual"
+                explanation = tutor.explain_with_example(topic)
+                tutor.speak(explanation)
+            elif result.class_id == CLASS_BORED and tutor._available():
+                logger.info("Estudiante aburrido — RAPIRO genera quiz corto.")
+                quiz = tutor.generate_quiz("el tema actual", n_questions=2)
+                if quiz.questions:
+                    tutor.speak(f"Probemos con una pregunta: {quiz.questions[0].question}")
 
             if result.class_id == CLASS_ABSENT:
                 if absence_start is None:

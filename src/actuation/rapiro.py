@@ -12,7 +12,7 @@ Reacciones según contexto:
 import logging
 import threading
 from config.settings import (
-    CLASS_STUDYING, CLASS_PHONE, CLASS_ABSENT,
+    CLASS_STUDYING, CLASS_PHONE, CLASS_ABSENT, CLASS_CONFUSED, CLASS_BORED,
     DO_NOT_DISTURB_DURATION_SEC
 )
 from src.actuation.led_controller import LEDController
@@ -46,6 +46,10 @@ class RAPIROController:
             self._react_phone()
         elif class_id == CLASS_ABSENT:
             self._react_absent()
+        elif class_id == CLASS_CONFUSED:
+            self.react_confused()
+        elif class_id == CLASS_BORED:
+            self.react_bored()
         else:
             logger.warning("Clase desconocida: %d", class_id)
 
@@ -66,6 +70,18 @@ class RAPIROController:
         self._leds.set_absent()
         self._servos.alert_pose()
         logger.debug("Reaccion: ausente.")
+
+    def react_confused(self) -> None:
+        """Azul parpadeante + think: estudiante confundido → RAPIRO va a re-explicar."""
+        self._leds.flash_blue(times=2, interval=0.3)
+        self._servos.think()
+        logger.info("Reaccion: confundido detectado.")
+
+    def react_bored(self) -> None:
+        """Amarillo + sacude cabeza: estudiante aburrido → RAPIRO activa quiz."""
+        self._leds.set_phone()
+        self._servos.head_shake()
+        logger.info("Reaccion: aburrido detectado.")
 
     # ==================================================================
     # TUTOR — reacciones durante la sesión de tutoría

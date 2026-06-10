@@ -48,6 +48,8 @@ CLASS_STYLE = {
     0: (GREEN,  "[0] ESTUDIANDO    ", "LED verde    | Servos neutros"),
     1: (YELLOW, "[1] USANDO CELULAR", "LED amarillo | Mueve cabeza"),
     2: (RED,    "[2] PUESTO VACIO  ", "LED rojo     | Pose de alerta"),
+    3: (BLUE,   "[3] CONFUNDIDO    ", "LED azul x2  | Inclina cabeza (think) + re-explica"),
+    4: (YELLOW, "[4] ABURRIDO      ", "LED amarillo | Sacude cabeza + genera quiz"),
 }
 
 # ---------------------------------------------------------------------------
@@ -60,14 +62,14 @@ class MockClassifier:
     def __init__(self, fixed_class: int | None = None):
         self._fixed = fixed_class
         # Probabilidades base para simular variabilidad
-        self._probs = [0.7, 0.15, 0.15]
+        self._probs = [0.60, 0.15, 0.10, 0.10, 0.05]
 
     def predict(self, frame: np.ndarray):
         if self._fixed is not None:
             class_id = self._fixed
             confidence = random.uniform(0.75, 0.98)
         else:
-            class_id = random.choices([0, 1, 2], weights=self._probs)[0]
+            class_id = random.choices([0, 1, 2, 3, 4], weights=self._probs)[0]
             confidence = random.uniform(0.68, 0.97)
 
         latency_ms = random.uniform(120, 280)
@@ -343,8 +345,8 @@ def run_quiz_mode():
 def parse_args():
     parser = argparse.ArgumentParser(description="RAPIRO demo sin hardware")
     parser.add_argument("--no-cam",   action="store_true", help="No usar webcam")
-    parser.add_argument("--class",    dest="fixed_class", type=int, choices=[0, 1, 2],
-                        default=None, help="Forzar clase fija (0=estudio 1=celular 2=ausente)")
+    parser.add_argument("--class",    dest="fixed_class", type=int, choices=[0, 1, 2, 3, 4],
+                        default=None, help="Forzar clase fija (0=estudio 1=celular 2=ausente 3=confundido 4=aburrido)")
     parser.add_argument("--interval", type=float, default=2.0,
                         help="Segundos entre clasificaciones (default: 2)")
     parser.add_argument("--quiz",     action="store_true",
