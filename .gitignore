@@ -1,5 +1,7 @@
 .env
 !.env.example
+credentials.json
+.drive_token.json
 __pycache__/
 *.pyc
 *.pyo

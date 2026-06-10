@@ -41,6 +41,18 @@ import cv2
 import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# IDs de carpetas en Google Drive (una por clase)
+DRIVE_FOLDER_IDS = {
+    0: '1xUQ91f9rvzeaTTRA_z9cfmbamdgLscHR',  # Estudiando
+    1: '1q3pv1gnDspiZbgpYhcNqU7aZTD8rOXPX',  # Usando el Cel
+    2: '1sf1tBbg2w7Rb3cPXvoRaBiM6ieaNe0-V',   # Puesto vacio
+    3: '1AsYGZHBS_Zz0JhJtmNH9ZoUl98ri9NI_',  # Confundido
+    4: '1AFvJBQpk7l1Gl2cOTNkOtpkv7d4gEpKU',  # Aburrido
+}
+CREDENTIALS_PATH = os.path.join(ROOT, 'credentials.json')
+TOKEN_PATH       = os.path.join(ROOT, '.drive_token.json')
+DRIVE_SCOPES     = ['https://www.googleapis.com/auth/drive.file']
 sys.path.insert(0, ROOT)
 
 DATASET_DIR = os.path.join(ROOT, "dataset")
@@ -101,13 +113,28 @@ def draw_overlay(frame: np.ndarray, counts: dict[int, int], last_saved: str) -> 
         cv2.putText(display, f"    {counts[cid]} imgs", (x, 78),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
 
-    cv2.putText(display, "[3] Confundido  [4] Aburrido  [s] stats  [q] salir", (10, 100),
+    cv2.putText(display, "[3] Confundido  [4] Aburrido  [s] stats  [x] limpiar  [q] salir", (10, 100),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
 
     if last_saved:
         cv2.putText(display, f"Guardado: {os.path.basename(last_saved)}", (10, h - 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
     return display
+
+
+def clear_dataset() -> int:
+    """Elimina todas las imágenes locales de todas las clases. Devuelve total borrado."""
+    total = 0
+    for class_id, d in CLASS_DIRS.items():
+        if not os.path.exists(d):
+            continue
+        images = [f for f in os.listdir(d) if f.endswith(".jpg")]
+        for f in images:
+            os.remove(os.path.join(d, f))
+        total += len(images)
+        print(f"  Clase {class_id} ({CLASS_NAMES[class_id]}): {len(images)} imágenes eliminadas")
+    print(f"  TOTAL eliminadas: {total}")
+    return total
 
 
 def print_stats(counts: dict[int, int]):
@@ -150,6 +177,17 @@ def main(camera_index: int):
             break
         elif key == ord("s"):
             print_stats(counts)
+        elif key == ord("x"):
+            cv2.destroyAllWindows()
+            confirm = input("\n  !! Borrar TODAS las fotos locales? (s/n): ").strip().lower()
+            if confirm == "s":
+                clear_dataset()
+                counts = count_images()
+                last_saved = ""
+                print("  Dataset limpio.")
+            else:
+                print("  Cancelado.")
+            cv2.namedWindow("RAPIRO Dataset Collector")
         elif key in (ord("0"), ord("1"), ord("2"), ord("3"), ord("4")):
             class_id = key - ord("0")
             path = save_image(frame, class_id)
@@ -162,8 +200,121 @@ def main(camera_index: int):
     print_stats(count_images())
 
 
+# ---------------------------------------------------------------------------
+# Sync a Google Drive
+# ---------------------------------------------------------------------------
+
+def _get_drive_service():
+    """Autentica y devuelve el servicio de Drive. Abre el navegador la primera vez."""
+    try:
+        from google.oauth2.credentials import Credentials
+        from google_auth_oauthlib.flow import InstalledAppFlow
+        from google.auth.transport.requests import Request
+        from googleapiclient.discovery import build
+    except ImportError:
+        print("ERROR: Instalar dependencias de Drive:")
+        print("  pip install google-api-python-client google-auth-oauthlib")
+        return None
+
+    if not os.path.exists(CREDENTIALS_PATH):
+        print(f"\nERROR: No se encontró '{CREDENTIALS_PATH}'.")
+        print("Seguí estos pasos una sola vez:")
+        print("  1. Ir a console.cloud.google.com")
+        print("  2. Crear proyecto → Habilitar Google Drive API")
+        print("  3. Credenciales > OAuth 2.0 > Aplicacion de escritorio")
+        print("  4. Descargar JSON → guardar como 'credentials.json' en la raiz del proyecto")
+        return None
+
+    creds = None
+    if os.path.exists(TOKEN_PATH):
+        creds = Credentials.from_authorized_user_file(TOKEN_PATH, DRIVE_SCOPES)
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, DRIVE_SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open(TOKEN_PATH, 'w') as token:
+            token.write(creds.to_json())
+
+    return build('drive', 'v3', credentials=creds, cache_discovery=False)
+
+
+def _existing_filenames_in_drive(service, folder_id: str) -> set:
+    """Devuelve set de nombres de archivos ya existentes en la carpeta de Drive."""
+    existing, token = set(), None
+    while True:
+        resp = service.files().list(
+            q=f"'{folder_id}' in parents and trashed=false",
+            fields='nextPageToken, files(name)',
+            pageToken=token,
+        ).execute()
+        for f in resp.get('files', []):
+            existing.add(f['name'])
+        token = resp.get('nextPageToken')
+        if not token:
+            break
+    return existing
+
+
+def sync_to_drive():
+    """Sube todas las imágenes locales a las carpetas de Drive correspondientes."""
+    print("\nConectando con Google Drive...")
+    service = _get_drive_service()
+    if service is None:
+        return
+
+    from googleapiclient.http import MediaFileUpload
+
+    total_uploaded = 0
+    total_skipped  = 0
+
+    for class_id, folder_id in DRIVE_FOLDER_IDS.items():
+        local_dir = CLASS_DIRS[class_id]
+        if not os.path.exists(local_dir):
+            continue
+
+        images = [f for f in os.listdir(local_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+        if not images:
+            print(f"  Clase {class_id} ({CLASS_NAMES[class_id]}): sin imágenes, salteada.")
+            continue
+
+        print(f"\n  Clase {class_id} ({CLASS_NAMES[class_id]}): {len(images)} imágenes locales")
+        existing = _existing_filenames_in_drive(service, folder_id)
+
+        uploaded = 0
+        for fname in images:
+            if fname in existing:
+                total_skipped += 1
+                continue
+
+            fpath = os.path.join(local_dir, fname)
+            media = MediaFileUpload(fpath, mimetype='image/jpeg', resumable=False)
+            service.files().create(
+                body={'name': fname, 'parents': [folder_id]},
+                media_body=media,
+                fields='id',
+            ).execute()
+            uploaded += 1
+            total_uploaded += 1
+            print(f"    Subida {uploaded}/{len(images) - len(existing)}: {fname}", end='\r')
+
+        print(f"    {uploaded} subidas, {len(images) - uploaded} ya existian.        ")
+
+    print(f"\nSync completado: {total_uploaded} subidas, {total_skipped} saltadas (ya existian).")
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--camera", type=int, default=0)
+    parser.add_argument("--upload", action="store_true",
+                        help="Subir imágenes a Google Drive al salir")
     args = parser.parse_args()
     main(args.camera)
+    if args.upload:
+        sync_to_drive()

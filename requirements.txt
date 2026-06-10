@@ -12,3 +12,6 @@ SpeechRecognition>=3.10
 pyaudio>=0.2.14
 pytest>=7.4
 pytest-cov>=4.1
+google-api-python-client>=2.0
+google-auth-oauthlib>=1.0
+google-auth-httplib2>=0.2
