@@ -10,6 +10,7 @@ Uso:
     python demo.py --no-cam          # frames sintéticos (sin webcam)
     python demo.py --class 1         # fuerza clase fija (0/1/2)
     python demo.py --interval 2      # segundos entre clasificaciones
+    python demo.py --quiz            # modo tutor interactivo (quiz + explicaciones)
 """
 
 import argparse
@@ -192,6 +193,136 @@ def run_demo(fixed_class: int | None, no_cam: bool, interval: float):
 
 
 # ---------------------------------------------------------------------------
+# Modo tutor interactivo
+# ---------------------------------------------------------------------------
+
+SAMPLE_TEXT = """
+La fotosintesis es el proceso mediante el cual las plantas producen su propio alimento
+usando luz solar, agua y dioxido de carbono. Ocurre principalmente en las hojas, en
+estructuras llamadas cloroplastos que contienen clorofila, el pigmento verde responsable
+de captar la energia luminica.
+
+El proceso se divide en dos etapas: las reacciones luminosas (que ocurren en los tilacoides
+y convierten la luz en energia quimica ATP y NADPH) y el Ciclo de Calvin (que ocurre en
+el estroma y usa esa energia para fijar el CO2 en azucares como la glucosa).
+
+La ecuacion general es: 6CO2 + 6H2O + luz -> C6H12O6 + 6O2
+
+La glucosa producida sirve como fuente de energia para la planta y como materia prima
+para construir celulosa, proteinas y otros compuestos organicos. El oxigeno liberado
+es el subproducto que hace posible la vida animal en la Tierra.
+
+La eficiencia de la fotosintesis depende de factores como la intensidad luminica,
+la concentracion de CO2, la temperatura y la disponibilidad de agua y nutrientes.
+"""
+
+
+def run_quiz_mode():
+    """Modo tutor interactivo: explicacion + quiz multiple choice."""
+    print(f"\n{BOLD}{'='*58}{RESET}")
+    print(f"{BOLD}   RAPIRO Guardian -- MODO TUTOR INTERACTIVO{RESET}")
+    print(f"{BOLD}{'='*58}{RESET}\n")
+
+    # Configurar tutor
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    os.environ.setdefault("MODEL_PATH", "models/mobilenetv2_int8.tflite")
+
+    from src.tutoring.document_processor import DocumentProcessor
+    from src.tutoring.tutor import IntelligentTutor
+
+    doc = DocumentProcessor()
+    n_chunks = doc.load_from_text(SAMPLE_TEXT)
+    print(f"{GRAY}  Documento de ejemplo cargado ({n_chunks} chunks){RESET}")
+
+    tutor = IntelligentTutor(doc)
+
+    if not tutor._available():
+        print(f"{RED}  ANTHROPIC_API_KEY no configurada.{RESET}")
+        print(f"  Crea un archivo .env con: ANTHROPIC_API_KEY=sk-ant-...")
+        return
+
+    print(f"{GREEN}  Claude Haiku conectado{RESET}")
+    print(f"{GRAY}  Tema de ejemplo: Fotosintesis{RESET}\n")
+
+    # ------------------------------------------------------------------
+    # Paso 1: Explicacion con ejemplos reales
+    # ------------------------------------------------------------------
+    print(f"{BOLD}[1/3] EXPLICACION DEL TEMA{RESET}")
+    print(f"{GRAY}{'─'*58}{RESET}")
+    input(f"{GRAY}  Presiona Enter para que RAPIRO explique el tema...{RESET}")
+    print()
+
+    explanation = tutor.explain_with_example("fotosintesis")
+    print(explanation)
+    print()
+
+    # ------------------------------------------------------------------
+    # Paso 2: Generar quiz
+    # ------------------------------------------------------------------
+    print(f"{BOLD}[2/3] QUIZ - Vamos a ver cuanto entendiste{RESET}")
+    print(f"{GRAY}{'─'*58}{RESET}")
+    input(f"{GRAY}  Presiona Enter para generar las preguntas...{RESET}")
+    print(f"\n{GRAY}  Generando preguntas con Claude...{RESET}\n")
+
+    quiz = tutor.generate_quiz("fotosintesis", n_questions=3)
+
+    if not quiz.questions:
+        print(f"{RED}  No se pudieron generar preguntas.{RESET}")
+        return
+
+    # ------------------------------------------------------------------
+    # Paso 3: Quiz interactivo
+    # ------------------------------------------------------------------
+    results = []
+    for i, q in enumerate(quiz.questions):
+        print(f"{BOLD}Pregunta {i+1}/{len(quiz.questions)}:{RESET}")
+        print(f"  {q.question}\n")
+        for letter, option in q.options.items():
+            print(f"  {BOLD}{letter}{RESET}) {option}")
+        print()
+
+        while True:
+            answer = input(f"  Tu respuesta (A/B/C/D): ").strip().upper()
+            if answer in ("A", "B", "C", "D"):
+                break
+            print(f"  {YELLOW}Ingresa A, B, C o D{RESET}")
+
+        result = tutor.evaluate_answer(q, answer)
+        results.append(result)
+
+        if result.is_correct:
+            print(f"\n  {GREEN}{BOLD}CORRECTO!{RESET}")
+        else:
+            print(f"\n  {RED}{BOLD}INCORRECTO. La respuesta era {q.correct}{RESET}")
+
+        print(f"\n  {result.feedback}\n")
+        print(f"{GRAY}{'─'*58}{RESET}\n")
+
+    # ------------------------------------------------------------------
+    # Paso 4: Puntaje final
+    # ------------------------------------------------------------------
+    print(f"{BOLD}[3/3] RESULTADO FINAL{RESET}")
+    print(f"{GRAY}{'─'*58}{RESET}")
+    correct = sum(1 for r in results if r.is_correct)
+    total = len(results)
+    pct = correct / total * 100
+
+    color = GREEN if pct >= 70 else YELLOW if pct >= 40 else RED
+    print(f"\n  Puntaje: {color}{BOLD}{correct}/{total} ({pct:.0f}%){RESET}\n")
+
+    if pct == 100:
+        print(f"  {GREEN}Perfecto! Dominaste el tema.{RESET}")
+    elif pct >= 70:
+        print(f"  {GREEN}Muy bien! Repasa los errores para llegar al 100%.{RESET}")
+    elif pct >= 40:
+        print(f"  {YELLOW}Buen intento. Te recomiendo releer la explicacion.{RESET}")
+    else:
+        print(f"  {RED}Necesitas repasar. Usa la opcion de explicacion nuevamente.{RESET}")
+
+    print()
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -202,13 +333,18 @@ def parse_args():
                         default=None, help="Forzar clase fija (0=estudio 1=celular 2=ausente)")
     parser.add_argument("--interval", type=float, default=2.0,
                         help="Segundos entre clasificaciones (default: 2)")
+    parser.add_argument("--quiz",     action="store_true",
+                        help="Modo tutor interactivo: explicacion + quiz")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    run_demo(
-        fixed_class=args.fixed_class,
-        no_cam=args.no_cam,
-        interval=args.interval,
-    )
+    if args.quiz:
+        run_quiz_mode()
+    else:
+        run_demo(
+            fixed_class=args.fixed_class,
+            no_cam=args.no_cam,
+            interval=args.interval,
+        )
