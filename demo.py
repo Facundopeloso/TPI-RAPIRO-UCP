@@ -120,8 +120,8 @@ def show_opencv_window(frame: np.ndarray, class_id: int, confidence: float):
     if not CV2_AVAILABLE:
         return
 
-    COLOR_MAP = {0: (0, 200, 0), 1: (0, 200, 200), 2: (0, 0, 200)}
-    LABEL_MAP = {0: "Estudiando", 1: "Usando celular", 2: "Puesto vacio"}
+    COLOR_MAP = {0: (0, 200, 0), 1: (0, 200, 200), 2: (0, 0, 200), 3: (255, 140, 0), 4: (180, 180, 0)}
+    LABEL_MAP = {0: "Estudiando", 1: "Usando celular", 2: "Puesto vacio", 3: "Confundido", 4: "Aburrido"}
 
     display = frame.copy()
     color = COLOR_MAP[class_id]
