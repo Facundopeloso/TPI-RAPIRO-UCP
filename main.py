@@ -59,9 +59,16 @@ def main() -> None:
 
     def on_question(question: str) -> None:
         logger.info("Pregunta por voz: %s", question)
-        rapiro.react_hotword_detected()     # azul brillante + mira usuario
-        tutor.answer_and_speak(question)    # pensar → explicar → hablar (con reacciones)
-        rapiro.deactivate_tutoring()        # vuelve a verde + neutro
+        rapiro.react_hotword_detected()
+
+        # Si pide quiz por voz ("quiero un quiz", "haceme preguntas")
+        q_lower = question.lower()
+        if any(w in q_lower for w in ("quiz", "pregunta", "preguntas", "evalua", "evalúa", "test")):
+            tutor.audio_study_session("el tema actual", n_questions=3)
+        else:
+            tutor.answer_and_speak(question)
+
+        rapiro.deactivate_tutoring()
 
     voice = VoiceListener(on_question=on_question)
     if voice.start():
@@ -92,17 +99,13 @@ def main() -> None:
 
             rapiro.react(result.class_id)
 
-            # Reacciones adaptativas: confundido → re-explica, aburrido → quiz
+            # Reacciones adaptativas por audio: confundido → re-explica, aburrido → quiz
             if result.class_id == CLASS_CONFUSED and tutor._available():
-                logger.info("Estudiante confundido — RAPIRO re-explica.")
-                topic = "el tema actual"
-                explanation = tutor.explain_with_example(topic)
-                tutor.speak(explanation)
+                logger.info("Estudiante confundido — RAPIRO re-explica por audio.")
+                tutor.audio_study_session("el tema actual", n_questions=2)
             elif result.class_id == CLASS_BORED and tutor._available():
-                logger.info("Estudiante aburrido — RAPIRO genera quiz corto.")
-                quiz = tutor.generate_quiz("el tema actual", n_questions=2)
-                if quiz.questions:
-                    tutor.speak(f"Probemos con una pregunta: {quiz.questions[0].question}")
+                logger.info("Estudiante aburrido — RAPIRO lanza quiz por audio.")
+                tutor.audio_study_session("el tema actual", n_questions=2)
 
             if result.class_id == CLASS_ABSENT:
                 if absence_start is None:

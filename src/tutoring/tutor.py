@@ -401,3 +401,157 @@ class IntelligentTutor:
         text = self.answer(question)
         self.speak(text)
         return text
+
+    # ------------------------------------------------------------------
+    # Modo 6: escuchar respuesta por micrófono
+    # ------------------------------------------------------------------
+
+    def listen_for_answer(self, timeout: int = 10) -> str | None:
+        """
+        Escucha la respuesta del estudiante por micrófono.
+        Retorna 'A', 'B', 'C' o 'D', o None si no se entendió.
+        """
+        try:
+            import speech_recognition as sr
+        except ImportError:
+            logger.warning("SpeechRecognition no disponible.")
+            return None
+
+        recognizer = sr.Recognizer()
+        recognizer.energy_threshold = 300
+        recognizer.pause_threshold = 0.8
+
+        try:
+            with sr.Microphone() as source:
+                recognizer.adjust_for_ambient_noise(source, duration=0.3)
+                logger.info("Escuchando respuesta...")
+                audio = recognizer.listen(source, timeout=timeout, phrase_time_limit=5)
+
+            text = recognizer.recognize_google(audio, language=SPEECH_LANGUAGE).upper()
+            logger.info("Respuesta escuchada: '%s'", text)
+
+            # Buscar A/B/C/D como palabra suelta o inicio de texto
+            for letter in ("A", "B", "C", "D"):
+                if letter in text.split() or text.strip().startswith(letter):
+                    return letter
+
+            # Manejar "LA A", "LA B", etc. (forma española)
+            for letter in ("A", "B", "C", "D"):
+                if f"LA {letter}" in text or f"EL {letter}" in text:
+                    return letter
+
+            return None
+
+        except sr.WaitTimeoutError:
+            logger.warning("Tiempo de espera agotado esperando respuesta.")
+            return None
+        except sr.UnknownValueError:
+            logger.warning("No se entendió la respuesta.")
+            return None
+        except Exception as exc:
+            logger.error("Error escuchando respuesta: %s", exc)
+            return None
+
+    # ------------------------------------------------------------------
+    # Modo 7: sesión de estudio completa por audio
+    # ------------------------------------------------------------------
+
+    def audio_study_session(self, topic: str, n_questions: int = 3) -> dict:
+        """
+        Flujo completo de estudio por voz:
+          1. RAPIRO explica el tema hablando
+          2. RAPIRO hace las preguntas en voz alta
+          3. El estudiante responde hablando (A/B/C/D)
+          4. RAPIRO da feedback hablado y reacciona físicamente
+          5. RAPIRO anuncia el puntaje final
+
+        Returns: {"topic", "explanation", "results", "score_pct"}
+        """
+        logger.info("Iniciando sesion de estudio por audio: '%s'", topic)
+
+        # 1. Explicación hablada
+        self._r("react_thinking")
+        self.speak(f"Vamos a estudiar sobre {topic}. Dame un momento para preparar la explicación.")
+        explanation = self.explain_with_example(topic)
+        self._r("react_explaining")
+        self.speak(explanation)
+
+        # 2. Generar quiz
+        self._r("react_thinking")
+        self.speak("Ahora vamos con algunas preguntas para ver cuánto entendiste.")
+        quiz = self.generate_quiz(topic, n_questions)
+
+        if not quiz.questions:
+            self.speak("No pude generar preguntas en este momento. Intentemos después.")
+            return {"topic": topic, "explanation": explanation, "results": [], "score_pct": 0}
+
+        # 3. Quiz por voz
+        results = []
+        for i, q in enumerate(quiz.questions):
+            self._r("react_asking_question")
+
+            # Leer pregunta
+            question_text = (
+                f"Pregunta {i + 1} de {len(quiz.questions)}. "
+                f"{q.question}. "
+                f"Opción A: {q.options['A']}. "
+                f"Opción B: {q.options['B']}. "
+                f"Opción C: {q.options['C']}. "
+                f"Opción D: {q.options['D']}. "
+                f"¿Cuál es tu respuesta?"
+            )
+            self.speak(question_text)
+
+            # Escuchar respuesta (2 intentos)
+            answer = None
+            for attempt in range(2):
+                answer = self.listen_for_answer(timeout=12)
+                if answer:
+                    break
+                if attempt == 0:
+                    self.speak("No te escuché bien. Decí la letra de tu respuesta: A, B, C o D.")
+
+            if not answer:
+                self.speak("No pude escucharte. Pasamos a la siguiente pregunta.")
+                continue
+
+            self.speak(f"Dijiste la opción {answer}.")
+
+            # Evaluar y dar feedback hablado
+            result = self.evaluate_answer(q, answer)
+            results.append(result)
+            self.speak(result.feedback)
+
+        # 4. Puntaje final
+        if results:
+            correct = sum(1 for r in results if r.is_correct)
+            total = len(results)
+            pct = correct / total
+
+            self._r("react_quiz_score", pct)
+
+            if pct >= 0.70:
+                self.speak(
+                    f"Excelente! Respondiste {correct} de {total} correctamente. "
+                    f"Un {int(pct*100)} por ciento. ¡Muy buen trabajo!"
+                )
+            elif pct >= 0.40:
+                self.speak(
+                    f"Buen intento. Tuviste {correct} de {total}. "
+                    f"Te recomiendo repasar los temas donde te equivocaste."
+                )
+            else:
+                self.speak(
+                    f"Tuviste {correct} de {total}. No te preocupes, "
+                    f"repasemos el tema juntos cuando quieras."
+                )
+        else:
+            pct = 0
+            self.speak("No pude registrar tus respuestas esta vez.")
+
+        return {
+            "topic": topic,
+            "explanation": explanation,
+            "results": results,
+            "score_pct": pct,
+        }
