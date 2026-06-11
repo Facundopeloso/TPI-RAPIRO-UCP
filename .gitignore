@@ -24,6 +24,8 @@ models/plots/
 dataset/class_0/*.jpg
 dataset/class_1/*.jpg
 dataset/class_2/*.jpg
+dataset/class_3/*.jpg
+dataset/class_4/*.jpg
 lambda/*.zip
 terraform/.terraform/
 terraform/terraform.tfstate*

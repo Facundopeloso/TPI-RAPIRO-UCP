@@ -29,7 +29,7 @@ _dynamodb = boto3.resource("dynamodb", region_name=REGION)
 _table    = _dynamodb.Table(TABLE)
 _s3       = boto3.client("s3", region_name=REGION)
 
-CLASS_LABELS   = {0: "Estudiando", 1: "Usando celular", 2: "Puesto vacío"}
+CLASS_LABELS   = {0: "Estudiando", 1: "Usando celular", 2: "Puesto vacío", 3: "Confundido", 4: "Aburrido"}
 _ALLOWED_TYPES = {"application/pdf", "text/plain"}
 _MAX_BYTES     = 10 * 1024 * 1024  # 10 MB
 
@@ -134,7 +134,7 @@ main{max-width:1100px;margin:2rem auto;padding:0 1rem}
 .card{background:#1e293b;border-radius:.75rem;padding:1.5rem;border:1px solid #334155}
 .card .lbl{font-size:.7rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em}
 .card .val{font-size:2rem;font-weight:700;margin-top:.4rem}
-.c0 .val{color:#22c55e}.c1 .val{color:#f59e0b}.c2 .val{color:#ef4444}.ct .val{color:#38bdf8}
+.c0 .val{color:#22c55e}.c1 .val{color:#f59e0b}.c2 .val{color:#ef4444}.c3 .val{color:#38bdf8}.c4 .val{color:#a78bfa}.ct .val{color:#38bdf8}
 .sec{background:#1e293b;border-radius:.75rem;border:1px solid #334155;margin-bottom:1.5rem}
 .sec-h{padding:.75rem 1.5rem;border-bottom:1px solid #334155;font-weight:600;color:#cbd5e1;display:flex;align-items:center;justify-content:space-between}
 table{width:100%;border-collapse:collapse}
@@ -142,7 +142,7 @@ th{padding:.6rem 1.5rem;text-align:left;font-size:.7rem;color:#64748b;text-trans
 td{padding:.6rem 1.5rem;border-top:1px solid #1e293b;font-size:.85rem}
 tr:hover td{background:#0f172a}
 .badge{display:inline-block;padding:.15rem .55rem;border-radius:9999px;font-size:.7rem;font-weight:600}
-.b0{background:#14532d;color:#86efac}.b1{background:#78350f;color:#fcd34d}.b2{background:#7f1d1d;color:#fca5a5}
+.b0{background:#14532d;color:#86efac}.b1{background:#78350f;color:#fcd34d}.b2{background:#7f1d1d;color:#fca5a5}.b3{background:#0c4a6e;color:#7dd3fc}.b4{background:#3b0764;color:#d8b4fe}
 .bar-row{display:flex;align-items:center;gap:1rem;padding:.6rem 1.5rem}
 .bar-lbl{width:140px;font-size:.85rem;color:#cbd5e1}
 .bar-track{flex:1;background:#334155;border-radius:9999px;height:8px}
@@ -186,6 +186,8 @@ tr:hover td{background:#0f172a}
     <div class="card c0"><div class="lbl">Estudiando</div><div class="val" id="p0">—</div></div>
     <div class="card c1"><div class="lbl">Usando celular</div><div class="val" id="p1">—</div></div>
     <div class="card c2"><div class="lbl">Puesto vacío</div><div class="val" id="p2">—</div></div>
+    <div class="card c3"><div class="lbl">Confundido</div><div class="val" id="p3">—</div></div>
+    <div class="card c4"><div class="lbl">Aburrido</div><div class="val" id="p4">—</div></div>
   </div>
   <div class="sec">
     <div class="sec-h">Distribución por clase</div>
@@ -251,9 +253,9 @@ function switchTab(name){
 }
 
 // ── Estadísticas ──────────────────────────────────────────────────────────────
-const LABELS=["Estudiando","Usando celular","Puesto vacío"];
-const COLORS=["#22c55e","#f59e0b","#ef4444"];
-const BADGES=["b0","b1","b2"];
+const LABELS=["Estudiando","Usando celular","Puesto vacío","Confundido","Aburrido"];
+const COLORS=["#22c55e","#f59e0b","#ef4444","#38bdf8","#a78bfa"];
+const BADGES=["b0","b1","b2","b3","b4"];
 
 async function loadStats(){
   try{
@@ -263,6 +265,8 @@ async function loadStats(){
     document.getElementById("p0").textContent=(p["Estudiando"]||0)+"%";
     document.getElementById("p1").textContent=(p["Usando celular"]||0)+"%";
     document.getElementById("p2").textContent=(p["Puesto vacío"]||0)+"%";
+    document.getElementById("p3").textContent=(p["Confundido"]||0)+"%";
+    document.getElementById("p4").textContent=(p["Aburrido"]||0)+"%";
     document.getElementById("bars").innerHTML=LABELS.map((l,i)=>{
       const v=p[l]||0;
       return '<div class="bar-row"><div class="bar-lbl">'+l+'</div>'+
