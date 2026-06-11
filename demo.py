@@ -224,10 +224,11 @@ def rapiro_action(msg: str) -> None:
     print(f"  {BLUE}{BOLD}[RAPIRO]{RESET} {GRAY}{msg}{RESET}")
 
 
-def run_quiz_mode():
+def run_quiz_mode(audio: bool = False):
     """Modo tutor interactivo: explicacion + quiz multiple choice."""
     print(f"\n{BOLD}{'='*58}{RESET}")
-    print(f"{BOLD}   RAPIRO Guardian -- MODO TUTOR INTERACTIVO{RESET}")
+    mode_label = "AUDIO" if audio else "TEXTO"
+    print(f"{BOLD}   RAPIRO Guardian -- MODO TUTOR [{mode_label}]{RESET}")
     print(f"{BOLD}{'='*58}{RESET}\n")
 
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -248,11 +249,33 @@ def run_quiz_mode():
         return
 
     print(f"{GREEN}  Claude Haiku conectado{RESET}")
-    print(f"{GRAY}  Tema de ejemplo: Fotosintesis{RESET}\n")
+    print(f"{GRAY}  Tema de ejemplo: Fotosintesis{RESET}")
+    if audio:
+        print(f"{BLUE}  Modo audio: RAPIRO habla y escucha por microfono{RESET}")
+    print()
+
+    if audio:
+        # ------------------------------------------------------------------
+        # Modo audio: delega todo en audio_study_session
+        # ------------------------------------------------------------------
+        print(f"{GRAY}  Iniciando sesion de audio... RAPIRO tomara el control.{RESET}\n")
+        rapiro_action("LED azul parpadeante + cabeza inclinada (iniciando sesion)")
+        # Cargar el texto de ejemplo en el doc para que haya contexto
+        doc.load_from_text(SAMPLE_TEXT)
+        result = tutor.audio_study_session("fotosintesis", n_questions=3)
+
+        pct = result["score_pct"] * 100
+        correct = sum(1 for r in result["results"] if r.is_correct)
+        total = len(result["results"])
+        color = GREEN if pct >= 70 else YELLOW if pct >= 40 else RED
+        print(f"\n  Puntaje final: {color}{BOLD}{correct}/{total} ({pct:.0f}%){RESET}\n")
+        return
 
     # ------------------------------------------------------------------
-    # Paso 1: Explicacion con ejemplos reales
+    # Modo texto (comportamiento original)
     # ------------------------------------------------------------------
+
+    # Paso 1: Explicacion
     print(f"{BOLD}[1/3] EXPLICACION DEL TEMA{RESET}")
     print(f"{GRAY}{'─'*58}{RESET}")
     input(f"{GRAY}  Presiona Enter para que RAPIRO explique el tema...{RESET}")
@@ -264,9 +287,7 @@ def run_quiz_mode():
     print(explanation)
     print()
 
-    # ------------------------------------------------------------------
     # Paso 2: Generar quiz
-    # ------------------------------------------------------------------
     print(f"{BOLD}[2/3] QUIZ - Vamos a ver cuanto entendiste{RESET}")
     print(f"{GRAY}{'─'*58}{RESET}")
     input(f"{GRAY}  Presiona Enter para generar las preguntas...{RESET}")
@@ -279,9 +300,7 @@ def run_quiz_mode():
         print(f"{RED}  No se pudieron generar preguntas.{RESET}")
         return
 
-    # ------------------------------------------------------------------
-    # Paso 3: Quiz interactivo
-    # ------------------------------------------------------------------
+    # Paso 3: Quiz interactivo por texto
     results = []
     for i, q in enumerate(quiz.questions):
         rapiro_action("LED blanco + inclinado hacia adelante (esperando respuesta)")
@@ -310,9 +329,7 @@ def run_quiz_mode():
         print(f"\n  {result.feedback}\n")
         print(f"{GRAY}{'─'*58}{RESET}\n")
 
-    # ------------------------------------------------------------------
     # Paso 4: Puntaje final
-    # ------------------------------------------------------------------
     print(f"{BOLD}[3/3] RESULTADO FINAL{RESET}")
     print(f"{GRAY}{'─'*58}{RESET}")
     correct = sum(1 for r in results if r.is_correct)
@@ -351,13 +368,15 @@ def parse_args():
                         help="Segundos entre clasificaciones (default: 2)")
     parser.add_argument("--quiz",     action="store_true",
                         help="Modo tutor interactivo: explicacion + quiz")
+    parser.add_argument("--audio",    action="store_true",
+                        help="Modo audio: RAPIRO habla y escucha por microfono (usar con --quiz)")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
     if args.quiz:
-        run_quiz_mode()
+        run_quiz_mode(audio=args.audio)
     else:
         run_demo(
             fixed_class=args.fixed_class,

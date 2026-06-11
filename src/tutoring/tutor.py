@@ -375,7 +375,11 @@ class IntelligentTutor:
 
     def speak(self, text: str) -> None:
         """Sintetiza texto en audio y lo reproduce. RAPIRO mira al usuario mientras habla."""
-        self._r("react_speaking")           # azul + mira usuario durante TTS
+        self._r("react_speaking")
+        if not text:
+            return
+
+        # Intentar pygame + gTTS (Linux / Raspberry Pi)
         try:
             import io
             import pygame
@@ -391,11 +395,32 @@ class IntelligentTutor:
             pygame.mixer.music.play()
             while pygame.mixer.music.get_busy():
                 pygame.time.Clock().tick(10)
+            return
 
         except ImportError:
-            logger.warning("gTTS o pygame no disponibles — solo respuesta por texto.")
+            pass
         except Exception as exc:
-            logger.error("Error en TTS: %s", exc)
+            logger.warning("pygame/gTTS falló: %s — intentando pyttsx3.", exc)
+
+        # Fallback: pyttsx3 (Windows, sin dependencias nativas)
+        try:
+            import pyttsx3
+            engine = pyttsx3.init()
+            engine.setProperty("rate", 160)
+            # Buscar voz en español si está disponible
+            for voice in engine.getProperty("voices"):
+                if "es" in voice.id.lower() or "spanish" in voice.name.lower():
+                    engine.setProperty("voice", voice.id)
+                    break
+            engine.say(text)
+            engine.runAndWait()
+            return
+        except ImportError:
+            pass
+        except Exception as exc:
+            logger.warning("pyttsx3 falló: %s", exc)
+
+        logger.warning("Sin TTS disponible — solo respuesta por texto.")
 
     def answer_and_speak(self, question: str) -> str:
         text = self.answer(question)
