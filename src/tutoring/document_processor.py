@@ -64,7 +64,11 @@ class DocumentProcessor:
             scores.append((score, i))
 
         scores.sort(reverse=True)
-        return [self.chunks[i] for _, i in scores[:top_k] if _ > 0]
+        top = scores[:top_k]
+        # If all scores are 0 (term present in every chunk → IDF=0), still return chunks
+        if any(s > 0 for s, _ in top):
+            return [self.chunks[i] for s, i in top if s > 0]
+        return [self.chunks[i] for _, i in top]
 
     # ------------------------------------------------------------------
     # Internos

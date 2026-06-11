@@ -150,6 +150,7 @@ class IntelligentTutor:
             return resp.content[0].text.strip()
         except Exception as exc:
             logger.error("Error llamando a Claude: %s", exc)
+            print(f"[TUTOR ERROR] {exc}")
             return ""
 
     # ------------------------------------------------------------------
@@ -252,10 +253,18 @@ class IntelligentTutor:
 
     def _parse_quiz_json(self, raw: str) -> list[QuizQuestion]:
         """Extrae y parsea el JSON del quiz desde la respuesta de Claude."""
-        # Intentar extraer bloque JSON si Claude agregó texto extra
-        match = re.search(r'\{[\s\S]*\}', raw)
+        if not raw:
+            logger.error("Respuesta de quiz vacia.")
+            print("[QUIZ] Respuesta vacia de Claude")
+            return []
+
+        # Quitar fences markdown si las hay (```json ... ```)
+        clean = re.sub(r'```(?:json)?\s*', '', raw).strip()
+
+        match = re.search(r'\{[\s\S]*\}', clean)
         if not match:
-            logger.error("No se encontró JSON en la respuesta del quiz.")
+            logger.error("No se encontro JSON en la respuesta del quiz.")
+            print(f"[QUIZ] Sin JSON. Respuesta raw:\n{raw[:300]}")
             return []
 
         try:
@@ -266,12 +275,13 @@ class IntelligentTutor:
                     question=q["question"],
                     options=q["options"],
                     correct=q["correct"].upper(),
-                    explanation=q["explanation"],
-                    real_world_example=q["real_world_example"],
+                    explanation=q.get("explanation", ""),
+                    real_world_example=q.get("real_world_example", ""),
                 ))
             return questions
         except (json.JSONDecodeError, KeyError) as exc:
             logger.error("Error parseando JSON del quiz: %s", exc)
+            print(f"[QUIZ] Parse error: {exc}\nRaw:\n{raw[:300]}")
             return []
 
     # ------------------------------------------------------------------
