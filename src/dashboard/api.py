@@ -29,7 +29,7 @@ _dynamodb = boto3.resource("dynamodb", region_name=REGION)
 _table    = _dynamodb.Table(TABLE)
 _s3       = boto3.client("s3", region_name=REGION)
 
-CLASS_LABELS   = {0: "Estudiando", 1: "Usando celular", 2: "Puesto vacío", 3: "Confundido", 4: "Aburrido"}
+CLASS_LABELS   = {0: "Estudiando", 1: "Usando celular", 2: "Puesto vacío"}
 _ALLOWED_TYPES = {"application/pdf", "text/plain"}
 _MAX_BYTES     = 10 * 1024 * 1024  # 10 MB
 
@@ -60,7 +60,10 @@ def get_stats():
     for item in items:
         c = item.get("clase_detectada")
         if c is not None:
-            counts[int(c)] = counts.get(int(c), 0) + 1
+            c = int(c)
+            if c not in (0, 1, 2):
+                c = 0  # mapear 3/4 → Estudiando
+            counts[c] = counts.get(c, 0) + 1
     total = sum(counts.values())
     return {
         "total_events": total,
@@ -186,8 +189,6 @@ tr:hover td{background:#0f172a}
     <div class="card c0"><div class="lbl">Estudiando</div><div class="val" id="p0">—</div></div>
     <div class="card c1"><div class="lbl">Usando celular</div><div class="val" id="p1">—</div></div>
     <div class="card c2"><div class="lbl">Puesto vacío</div><div class="val" id="p2">—</div></div>
-    <div class="card c3"><div class="lbl">Confundido</div><div class="val" id="p3">—</div></div>
-    <div class="card c4"><div class="lbl">Aburrido</div><div class="val" id="p4">—</div></div>
   </div>
   <div class="sec">
     <div class="sec-h">Distribución por clase</div>
@@ -253,9 +254,9 @@ function switchTab(name){
 }
 
 // ── Estadísticas ──────────────────────────────────────────────────────────────
-const LABELS=["Estudiando","Usando celular","Puesto vacío","Confundido","Aburrido"];
-const COLORS=["#22c55e","#f59e0b","#ef4444","#38bdf8","#a78bfa"];
-const BADGES=["b0","b1","b2","b3","b4"];
+const LABELS=["Estudiando","Usando celular","Puesto vacío"];
+const COLORS=["#22c55e","#f59e0b","#ef4444"];
+const BADGES=["b0","b1","b2"];
 
 async function loadStats(){
   try{
@@ -265,8 +266,6 @@ async function loadStats(){
     document.getElementById("p0").textContent=(p["Estudiando"]||0)+"%";
     document.getElementById("p1").textContent=(p["Usando celular"]||0)+"%";
     document.getElementById("p2").textContent=(p["Puesto vacío"]||0)+"%";
-    document.getElementById("p3").textContent=(p["Confundido"]||0)+"%";
-    document.getElementById("p4").textContent=(p["Aburrido"]||0)+"%";
     document.getElementById("bars").innerHTML=LABELS.map((l,i)=>{
       const v=p[l]||0;
       return '<div class="bar-row"><div class="bar-lbl">'+l+'</div>'+

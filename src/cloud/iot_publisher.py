@@ -1,6 +1,7 @@
 """
 src/cloud/iot_publisher.py
 Publicación de eventos de sesión en AWS IoT Core via MQTT.
+Usa awsiotsdk si está disponible, sino paho-mqtt con TLS mutuo.
 """
 
 import time
@@ -29,6 +30,8 @@ class IoTPublisher:
         if not AWS_IOT_ENDPOINT:
             logger.warning("AWS_IOT_ENDPOINT no configurado — modo offline.")
             return None
+
+        # Intentar awsiotsdk primero
         try:
             from awsiot import mqtt_connection_builder
             import awscrt.io as io
@@ -49,15 +52,37 @@ class IoTPublisher:
             )
             connect_future = connection.connect()
             connect_future.result()
-            logger.info("Conectado a AWS IoT Core: %s", AWS_IOT_ENDPOINT)
+            logger.info("Conectado a AWS IoT Core (awsiotsdk): %s", AWS_IOT_ENDPOINT)
+            self._backend = "awsiotsdk"
             return connection
 
         except ImportError:
-            logger.warning("awsiotsdk no instalado — eventos en modo offline.")
-            return None
+            logger.info("awsiotsdk no disponible — intentando paho-mqtt.")
         except Exception as exc:
-            logger.error("Error conectando a IoT Core: %s", exc)
-            return None
+            logger.error("awsiotsdk error: %s — intentando paho-mqtt.", exc)
+
+        # Fallback: paho-mqtt con TLS mutuo
+        try:
+            import paho.mqtt.client as mqtt
+            import ssl
+
+            client = mqtt.Client(client_id=f"rapiro-{self.session_id}", protocol=mqtt.MQTTv311)
+            context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=AWS_IOT_CA_PATH)
+            context.load_cert_chain(certfile=AWS_IOT_CERT_PATH, keyfile=AWS_IOT_KEY_PATH)
+            client.tls_set_context(context)
+
+            client.connect(AWS_IOT_ENDPOINT, port=8883, keepalive=30)
+            client.loop_start()
+            logger.info("Conectado a AWS IoT Core (paho-mqtt): %s", AWS_IOT_ENDPOINT)
+            self._backend = "paho"
+            return client
+
+        except ImportError:
+            logger.warning("paho-mqtt no instalado — modo offline.")
+        except Exception as exc:
+            logger.error("paho-mqtt error: %s", exc)
+
+        return None
 
     def publish_event(self, class_id: int, label: str, confidence: float, latency_ms: float) -> bool:
         now = time.monotonic()
@@ -80,11 +105,10 @@ class IoTPublisher:
             return True
 
         try:
-            self._client.publish(
-                topic=AWS_IOT_TOPIC,
-                payload=json.dumps(payload),
-                qos=1,
-            )
+            if getattr(self, "_backend", "") == "paho":
+                self._client.publish(AWS_IOT_TOPIC, json.dumps(payload), qos=1)
+            else:
+                self._client.publish(topic=AWS_IOT_TOPIC, payload=json.dumps(payload), qos=1)
             return True
         except Exception as exc:
             logger.error("Error publicando en IoT Core: %s", exc)
@@ -93,7 +117,11 @@ class IoTPublisher:
     def disconnect(self) -> None:
         if self._client:
             try:
-                self._client.disconnect().result()
+                if getattr(self, "_backend", "") == "paho":
+                    self._client.loop_stop()
+                    self._client.disconnect()
+                else:
+                    self._client.disconnect().result()
                 logger.info("Desconectado de AWS IoT Core.")
             except Exception as exc:
                 logger.warning("Error al desconectar IoT: %s", exc)

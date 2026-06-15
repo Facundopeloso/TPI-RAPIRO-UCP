@@ -37,3 +37,30 @@ output "lambda_function_name" {
   description = "Nombre de la Lambda que procesa eventos de IoT Core"
   value       = aws_lambda_function.event_processor.function_name
 }
+
+output "inference_lambda_name" {
+  description = "Nombre de la Lambda de inferencia de imágenes"
+  value       = aws_lambda_function.inference.function_name
+}
+
+output "inference_lambda_url" {
+  description = "URL para invocar inferencia desde Raspberry Pi (boto3)"
+  value       = aws_lambda_function_url.inference.function_url
+}
+
+output "model_s3_bucket" {
+  description = "Bucket S3 donde subir el modelo TFLite: aws s3 cp model.tflite s3://<bucket>/model.tflite"
+  value       = aws_s3_bucket.model.bucket
+}
+
+output "rapiro_pi_access_key_id" {
+  description = "AWS_ACCESS_KEY_ID para la Raspberry Pi (.env)"
+  value       = aws_iam_access_key.rapiro_pi.id
+  sensitive   = true
+}
+
+output "rapiro_pi_secret_access_key" {
+  description = "AWS_SECRET_ACCESS_KEY para la Raspberry Pi (.env)"
+  value       = aws_iam_access_key.rapiro_pi.secret
+  sensitive   = true
+}

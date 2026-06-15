@@ -162,6 +162,11 @@ resource "aws_iam_role_policy" "lambda_policy" {
         Effect   = "Allow"
         Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
         Resource = "arn:aws:logs:*:*:*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["polly:SynthesizeSpeech"]
+        Resource = "*"
       }
     ]
   })
@@ -641,4 +646,151 @@ resource "aws_eip" "dashboard_eip" {
   instance = aws_instance.dashboard.id
   domain   = "vpc"
   tags     = merge(var.common_tags, { Name = "rapiro-dashboard-eip" })
+}
+
+# ---------------------------------------------------------------------------
+# S3 — Modelo TFLite
+# ---------------------------------------------------------------------------
+
+resource "aws_s3_bucket" "model" {
+  bucket = "rapiro-model-${var.environment}-${data.aws_caller_identity.current.account_id}"
+  tags   = var.common_tags
+}
+
+resource "aws_s3_bucket_versioning" "model" {
+  bucket = aws_s3_bucket.model.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# IAM — Rol para Lambda de inferencia
+# ---------------------------------------------------------------------------
+
+resource "aws_iam_role" "inference_role" {
+  name = "rapiro-inference-role-${var.environment}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+    }]
+  })
+
+  tags = var.common_tags
+}
+
+resource "aws_iam_role_policy" "inference_policy" {
+  name = "rapiro-inference-policy-${var.environment}"
+  role = aws_iam_role.inference_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = "${aws_s3_bucket.model.arn}/*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["polly:SynthesizeSpeech"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = "arn:aws:logs:*:*:*"
+      }
+    ]
+  })
+}
+
+# ---------------------------------------------------------------------------
+# Lambda — Inferencia de imágenes (zip con inference_handler.py)
+# Soporta TFLite cuando se agrega el Layer; funciona como endpoint HTTP
+# ---------------------------------------------------------------------------
+
+resource "aws_lambda_function" "inference" {
+  filename         = "../lambda/inference.zip"
+  function_name    = "rapiro-inference-${var.environment}"
+  role             = aws_iam_role.inference_role.arn
+  handler          = "inference_handler.lambda_handler"
+  runtime          = "python3.11"
+  source_code_hash = filebase64sha256("../lambda/inference.zip")
+  timeout          = 30
+  memory_size      = 512
+
+  environment {
+    variables = {
+      MODEL_BUCKET = aws_s3_bucket.model.bucket
+      MODEL_KEY    = "model.tflite"
+    }
+  }
+
+  tags = var.common_tags
+}
+
+resource "aws_lambda_function_url" "inference" {
+  function_name      = aws_lambda_function.inference.function_name
+  authorization_type = "AWS_IAM"
+}
+
+resource "aws_cloudwatch_log_group" "inference" {
+  name              = "/aws/lambda/${aws_lambda_function.inference.function_name}"
+  retention_in_days = 7
+  tags              = var.common_tags
+}
+
+# ---------------------------------------------------------------------------
+# IAM — Usuario dedicado para Raspberry Pi
+# Credenciales para boto3: IoT, Lambda invoke, Polly, S3 documentos
+# ---------------------------------------------------------------------------
+
+resource "aws_iam_user" "rapiro_pi" {
+  name = "rapiro-pi-${var.environment}"
+  tags = var.common_tags
+}
+
+resource "aws_iam_access_key" "rapiro_pi" {
+  user = aws_iam_user.rapiro_pi.name
+}
+
+resource "aws_iam_user_policy" "rapiro_pi" {
+  name = "rapiro-pi-policy-${var.environment}"
+  user = aws_iam_user.rapiro_pi.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["lambda:InvokeFunction", "lambda:InvokeFunctionUrl"]
+        Resource = aws_lambda_function.inference.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["iot:Publish", "iot:Connect"]
+        Resource = "arn:aws:iot:${var.aws_region}:*:topic/${var.iot_topic}"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:PutObject", "s3:GetObject", "s3:ListBucket"]
+        Resource = [
+          aws_s3_bucket.documents.arn,
+          "${aws_s3_bucket.documents.arn}/*",
+          aws_s3_bucket.model.arn,
+          "${aws_s3_bucket.model.arn}/*"
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["polly:SynthesizeSpeech"]
+        Resource = "*"
+      }
+    ]
+  })
 }

@@ -1,21 +1,25 @@
 """
 demo.py
-Modo demo del sistema RAPIRO — sin hardware real.
+Pipeline completo RAPIRO sin hardware real.
 
-Simula el pipeline completo:
-  Cámara (webcam real o sintética) → Clasificador mock → Actuación en consola
+Cámara (DroidCam/webcam) → TFLite → ventana GUI con ojos RAPIRO animados
+→ DynamoDB → Claude Haiku → Polly TTS (audio)
 
 Uso:
-    python demo.py                   # webcam + clasificador aleatorio
-    python demo.py --no-cam          # frames sintéticos (sin webcam)
-    python demo.py --class 1         # fuerza clase fija (0/1/2)
-    python demo.py --interval 2      # segundos entre clasificaciones
-    python demo.py --quiz            # modo tutor interactivo (quiz + explicaciones)
+    python demo.py                   # pipeline real (CAMERA_URL del .env)
+    python demo.py --no-cam          # frames sintéticos (sin cámara)
+    python demo.py --class 1         # fuerza clase fija — modo mock (0/1/2)
+    python demo.py --interval 8      # segundos entre clasificaciones (default: 8)
+    python demo.py --quiz            # modo tutor interactivo
+
+Requiere .env con: ANTHROPIC_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+                   CAMERA_URL (ej: http://192.168.100.6:4747/video)
 """
 
 import argparse
 import math
 import random
+import signal
 import threading
 import time
 import sys
@@ -26,6 +30,13 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 os.environ.setdefault("MODEL_PATH", "models/mobilenetv2_int8.tflite")
+
+# Cargar .env (ANTHROPIC_API_KEY, AWS keys, CAMERA_URL, etc.)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), override=False)
+except ImportError:
+    pass
 
 import numpy as np
 
@@ -55,6 +66,31 @@ CLASS_STYLE = {
 }
 
 # ---------------------------------------------------------------------------
+# Pipeline real — configuración
+# ---------------------------------------------------------------------------
+try:
+    from config.settings import CLASS_STUDYING, CLASS_PHONE, CLASS_ABSENT
+except ImportError:
+    CLASS_STUDYING, CLASS_PHONE, CLASS_ABSENT = 0, 1, 2
+
+_SPEAK_COOLDOWN = float(os.getenv("SPEAK_COOLDOWN", "90"))
+_last_spoken: dict = {}
+_current_class: list = [-1]
+
+_STATE_PROMPTS = {
+    CLASS_PHONE: (
+        "Sos RAPIRO, un robot compañero de estudio. Detectaste que el estudiante está mirando el celular. "
+        "Decile algo corto y amigable para que lo deje y vuelva a estudiar. "
+        "Máximo 2 oraciones, español rioplatense, sin markdown."
+    ),
+    CLASS_ABSENT: (
+        "Sos RAPIRO, un robot compañero de estudio. El estudiante lleva un rato sin estar en su puesto. "
+        "Mandá un mensaje corto para que vuelva. "
+        "Máximo 2 oraciones, español rioplatense, sin markdown."
+    ),
+}
+
+# ---------------------------------------------------------------------------
 # Clasificador mock
 # ---------------------------------------------------------------------------
 
@@ -76,6 +112,55 @@ class MockClassifier:
 
         latency_ms = random.uniform(120, 280)
         return class_id, confidence, latency_ms
+
+
+# ---------------------------------------------------------------------------
+# Robot simulado (sin GPIO ni serial)
+# ---------------------------------------------------------------------------
+
+class SimulatedRAPIRO:
+    """Reemplaza RAPIROController en demo: sin hardware real."""
+
+    def __init__(self):
+        self._last_class_id = CLASS_STUDYING
+
+    def react(self, class_id: int) -> None:
+        self._last_class_id = class_id
+
+    def react_speaking(self) -> None:
+        pass
+
+    def stop_listening_effect(self) -> None:
+        pass
+
+    def cleanup(self) -> None:
+        pass
+
+
+def _speak_for_state_demo(class_id: int) -> None:
+    """Llama Claude Haiku → Polly TTS. Corre en daemon thread."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return
+    prompt = _STATE_PROMPTS.get(class_id)
+    if not prompt:
+        return
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=150,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = resp.content[0].text.strip()
+        if _current_class[0] != class_id:
+            print(f"  {GRAY}[TTS] Estado cambió — skip audio.{RESET}")
+            return
+        from src.tutoring.polly_tts import speak as polly_speak
+        polly_speak(text)
+    except Exception as exc:
+        print(f"  {RED}[TTS] Error: {exc}{RESET}")
 
 
 # ---------------------------------------------------------------------------
@@ -316,67 +401,233 @@ def show_opencv_window(frame: np.ndarray, class_id: int, confidence: float, fram
     rapiro = draw_rapiro_panel(class_id, confidence, frame_n)
     combined = np.hstack([cam, rapiro])
     cv2.imshow("RAPIRO Demo", combined)
-    cv2.waitKey(1)
 
 
 # ---------------------------------------------------------------------------
 # Pipeline principal
 # ---------------------------------------------------------------------------
 
+def _get_state_color(class_id: int) -> str:
+    return {CLASS_STUDYING: GREEN, CLASS_PHONE: YELLOW, CLASS_ABSENT: RED}.get(class_id, RESET)
+
+
 def run_demo(fixed_class: int | None, no_cam: bool, interval: float):
     print_header()
 
-    # Abrir webcam
+    # --- Clasificador ---
+    clf_real = None
+    if fixed_class is None:
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from src.classification.classifier import StudentClassifier
+            clf_real = StudentClassifier()
+            print(f"{GREEN}OK Clasificador TFLite{RESET}")
+        except Exception as e:
+            print(f"{YELLOW}!! TFLite no disponible — mock ({e}){RESET}")
+    clf_mock = MockClassifier(fixed_class) if clf_real is None else None
+    if clf_mock is not None:
+        print(f"{GRAY}  Clasificador: mock (sin modelo real){RESET}")
+
+    # --- Cámara ---
     cap = None
+    _latest_frame: list = [None]
+    _frame_lock = threading.Lock()
+    _drain_running = [True]
+    _is_stream = False
+
     if not no_cam and CV2_AVAILABLE:
-        cap = cv2.VideoCapture(0)
+        url = os.getenv("CAMERA_URL", "")
+        source: object = url if url else 0
+        cap = cv2.VideoCapture(source)
         if cap.isOpened():
-            print(f"{GREEN}OK Webcam abierta{RESET}")
+            _is_stream = bool(url)
+            if _is_stream:
+                def _drain():
+                    while _drain_running[0]:
+                        ret, f = cap.read()
+                        if ret and f is not None:
+                            with _frame_lock:
+                                _latest_frame[0] = f
+                        else:
+                            time.sleep(0.05)
+                threading.Thread(target=_drain, daemon=True).start()
+            print(f"{GREEN}OK Cámara: {source}{RESET}")
         else:
             cap = None
-            print(f"{YELLOW}!! Webcam no disponible -- usando frames sinteticos{RESET}")
+            print(f"{YELLOW}!! Cámara no disponible — frames sintéticos{RESET}")
     elif not CV2_AVAILABLE:
-        print(f"{YELLOW}!! opencv-python no instalado -- usando frames sinteticos{RESET}")
+        print(f"{YELLOW}!! opencv-python no instalado{RESET}")
     else:
-        print(f"{GRAY}  Modo --no-cam: frames sintéticos{RESET}")
+        print(f"{GRAY}  --no-cam: frames sintéticos{RESET}")
 
-    print(f"{GRAY}  Clasificador: mock (sin modelo TFLite){RESET}")
-    print(f"{GRAY}  AWS IoT: offline (logs locales){RESET}")
-    print(f"\n{GRAY}Presioná Ctrl+C para detener.\n{RESET}")
+    def _read_frame() -> np.ndarray:
+        if cap is None or not CV2_AVAILABLE:
+            return np.random.randint(0, 200, (480, 640, 3), dtype=np.uint8)
+        if _is_stream:
+            deadline = time.perf_counter() + 3.0
+            while time.perf_counter() < deadline:
+                with _frame_lock:
+                    if _latest_frame[0] is not None:
+                        return _latest_frame[0].copy()
+                time.sleep(0.05)
+            return np.zeros((480, 640, 3), dtype=np.uint8)
+        ret, f = cap.read()
+        return f if (ret and f is not None) else np.zeros((480, 640, 3), dtype=np.uint8)
 
-    clf = MockClassifier(fixed_class=fixed_class)
-    frame_n = 0
-    absence_streak = 0
-
+    # --- Cloud ---
+    cloud = None
     try:
-        while True:
-            frame = get_frame(cap)
-            class_id, confidence, latency_ms = clf.predict(frame)
+        from src.cloud.boto3_publisher import Boto3Publisher
+        cloud = Boto3Publisher()
+        print(f"{GREEN}OK DynamoDB conectado{RESET}")
+    except Exception as e:
+        print(f"{YELLOW}!! DynamoDB no disponible: {e}{RESET}")
 
-            print_detection(frame_n, class_id, confidence, latency_ms)
+    print(f"\n{GRAY}Presioná ESC, cerrá la ventana, o Ctrl+C para detener.\n{RESET}")
 
-            if CV2_AVAILABLE and (cap is not None or not no_cam):
-                show_opencv_window(frame, class_id, confidence, frame_n)
+    if CV2_AVAILABLE:
+        cv2.namedWindow("RAPIRO Demo", cv2.WINDOW_NORMAL)
 
-            # Simular alerta de ausencia prolongada
-            if class_id == 2:
-                absence_streak += 1
-                if absence_streak >= 3:
-                    print(f"  {RED}{BOLD}!! ALERTA SNS: ausencia prolongada detectada{RESET}\n")
-                    absence_streak = 0
-            else:
-                absence_streak = 0
+    # Estado pipeline
+    last_class_id = -1
+    pending_class_id = -1
+    pending_count = 0
+    CONFIRM_CYCLES = 2
+    disp_class = CLASS_STUDYING
+    disp_conf = 0.0
+    frame_n = 0
 
-            frame_n += 1
-            time.sleep(interval)
+    # Frame compartido: main loop captura, classify thread consume (evita lecturas concurrentes)
+    _shared_frame: list = [None]
+    _shared_frame_lock = threading.Lock()
+    _clf_result: list = [None]
+    _clf_lock = threading.Lock()
+    _running = [True]
+    _clf_ready = threading.Event()  # señal: hay frame nuevo para clasificar
 
-    except KeyboardInterrupt:
-        print(f"\n{GRAY}Demo detenido. Frames procesados: {frame_n}{RESET}\n")
-    finally:
+    def _classify_loop():
+        last_classify = 0.0
+        while _running[0]:
+            now = time.monotonic()
+            if now - last_classify < interval:
+                time.sleep(0.05)
+                continue
+            with _shared_frame_lock:
+                frame = _shared_frame[0]
+            if frame is None:
+                time.sleep(0.05)
+                continue
+            last_classify = time.monotonic()
+            try:
+                if clf_real is not None:
+                    res = clf_real.predict(frame)
+                    if res is not None:
+                        with _clf_lock:
+                            _clf_result[0] = (res.class_id, res.confidence, res.latency_ms)
+                else:
+                    with _clf_lock:
+                        _clf_result[0] = clf_mock.predict(frame)
+            except Exception as e:
+                print(f"  {GRAY}[CLF] {e}{RESET}")
+
+    threading.Thread(target=_classify_loop, daemon=True).start()
+
+    def _cleanup():
+        _running[0] = False
+        _drain_running[0] = False
         if cap is not None:
             cap.release()
         if CV2_AVAILABLE:
             cv2.destroyAllWindows()
+        if cloud:
+            try:
+                cloud.disconnect()
+            except Exception:
+                pass
+
+    signal.signal(signal.SIGTERM, lambda *_: (_cleanup(), sys.exit(0)))
+
+    try:
+        while True:
+            frame = _read_frame()
+
+            # Compartir frame con classify thread (único lector de cámara)
+            with _shared_frame_lock:
+                _shared_frame[0] = frame
+
+            # Procesar última clasificación disponible
+            with _clf_lock:
+                raw = _clf_result[0]
+                _clf_result[0] = None
+
+            if raw is not None:
+                raw_class, confidence, latency_ms = raw
+
+                # Mapeo 3 estados: 0/3/4 → estudiar, 1 → celular, 2 → ausente
+                if raw_class == CLASS_PHONE:
+                    effective = CLASS_PHONE
+                elif raw_class == CLASS_ABSENT:
+                    effective = CLASS_ABSENT
+                else:
+                    effective = CLASS_STUDYING
+
+                # Histéresis: confirmar N ciclos antes de cambiar
+                if effective == pending_class_id:
+                    pending_count += 1
+                else:
+                    pending_class_id = effective
+                    pending_count = 1
+
+                if pending_count >= CONFIRM_CYCLES:
+                    _current_class[0] = effective
+                    disp_conf = confidence
+
+                    if effective != last_class_id:
+                        disp_class = effective
+                        last_class_id = effective
+                        lbl = _STATE_LABELS.get(effective, "?")
+                        col = _get_state_color(effective)
+                        print(f"\n{col}{BOLD}[RAPIRO] {lbl}  ({confidence*100:.1f}%){RESET}")
+
+                    if effective != CLASS_STUDYING:
+                        now = time.monotonic()
+                        if now - _last_spoken.get(effective, 0.0) >= _SPEAK_COOLDOWN:
+                            _last_spoken[effective] = now
+                            threading.Thread(
+                                target=_speak_for_state_demo,
+                                args=(effective,),
+                                daemon=True,
+                            ).start()
+
+                    if cloud:
+                        try:
+                            from config.settings import CLASS_LABELS
+                            cloud.publish_event(
+                                class_id=effective,
+                                label=CLASS_LABELS[effective],
+                                confidence=confidence,
+                                latency_ms=latency_ms,
+                            )
+                        except Exception as e:
+                            print(f"  {GRAY}[Cloud] {e}{RESET}")
+
+            if CV2_AVAILABLE:
+                show_opencv_window(frame, disp_class, disp_conf, frame_n)
+                key = cv2.waitKey(50) & 0xFF
+                if key == 27:  # ESC
+                    break
+                # Cerrar si el usuario clica la X de la ventana
+                if cv2.getWindowProperty("RAPIRO Demo", cv2.WND_PROP_VISIBLE) < 1:
+                    break
+            else:
+                time.sleep(0.05)
+
+            frame_n += 1
+
+    except (KeyboardInterrupt, SystemExit):
+        print(f"\n{GRAY}Demo detenido. Frames: {frame_n}{RESET}\n")
+    finally:
+        _cleanup()
 
 
 # ---------------------------------------------------------------------------
@@ -786,8 +1037,8 @@ def parse_args():
     parser.add_argument("--no-cam",   action="store_true", help="No usar webcam")
     parser.add_argument("--class",    dest="fixed_class", type=int, choices=[0, 1, 2, 3, 4],
                         default=None, help="Forzar clase fija (0=estudio 1=celular 2=ausente 3=confundido 4=aburrido)")
-    parser.add_argument("--interval", type=float, default=2.0,
-                        help="Segundos entre clasificaciones (default: 2)")
+    parser.add_argument("--interval", type=float, default=8.0,
+                        help="Segundos entre clasificaciones (default: 8)")
     parser.add_argument("--quiz",     action="store_true",
                         help="Modo tutor interactivo: explicacion + quiz")
     parser.add_argument("--audio",    action="store_true",

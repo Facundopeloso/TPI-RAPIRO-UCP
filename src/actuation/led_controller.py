@@ -20,27 +20,51 @@ class LEDController:
         self._flash_thread: threading.Thread | None = None
         self._flash_stop = threading.Event()
 
+        self._h   = None   # lgpio handle
+        self._pins = (LED_RED_PIN, LED_GREEN_PIN, LED_BLUE_PIN)
+
+        # Intentar lgpio (Raspbian Trixie / bookworm)
+        try:
+            import lgpio
+            self._lgpio = lgpio
+            self._h = lgpio.gpiochip_open(0)
+            for pin in self._pins:
+                lgpio.gpio_claim_output(self._h, pin, 0, 0)
+                lgpio.gpio_write(self._h, pin, 1)  # HIGH = LED off (common anode)
+            self._gpio_available = True
+            logger.info("GPIO inicializado para LEDs (lgpio).")
+            return
+        except Exception as exc:
+            logger.debug("lgpio falló (%s), intentando RPi.GPIO.", exc)
+
+        # Fallback: RPi.GPIO
         try:
             import RPi.GPIO as GPIO
             self._GPIO = GPIO
             GPIO.setmode(GPIO.BCM)
             GPIO.setwarnings(False)
-            for pin in (LED_RED_PIN, LED_GREEN_PIN, LED_BLUE_PIN):
+            for pin in self._pins:
                 GPIO.setup(pin, GPIO.OUT)
                 GPIO.output(pin, GPIO.LOW)
             self._gpio_available = True
-            logger.info("GPIO inicializado para LEDs.")
-        except (ImportError, RuntimeError):
-            logger.warning("RPi.GPIO no disponible — LEDs en modo simulado.")
+            self._h = None
+            logger.info("GPIO inicializado para LEDs (RPi.GPIO).")
+        except Exception:
+            logger.warning("GPIO no disponible — LEDs en modo simulado.")
 
     def _set(self, r: bool, g: bool, b: bool) -> None:
         if not self._gpio_available:
             logger.debug("LED simulado — R=%s G=%s B=%s", r, g, b)
             return
-        GPIO = self._GPIO
-        GPIO.output(LED_RED_PIN,   GPIO.HIGH if r else GPIO.LOW)
-        GPIO.output(LED_GREEN_PIN, GPIO.HIGH if g else GPIO.LOW)
-        GPIO.output(LED_BLUE_PIN,  GPIO.HIGH if b else GPIO.LOW)
+        vals = (r, g, b)
+        if self._h is not None:
+            for pin, v in zip(self._pins, vals):
+                self._lgpio.gpio_write(self._h, pin, 0 if v else 1)  # common anode: LOW=ON
+        else:
+            GPIO = self._GPIO
+            GPIO.output(LED_RED_PIN,   GPIO.LOW if r else GPIO.HIGH)
+            GPIO.output(LED_GREEN_PIN, GPIO.LOW if g else GPIO.HIGH)
+            GPIO.output(LED_BLUE_PIN,  GPIO.LOW if b else GPIO.HIGH)
 
     # ------------------------------------------------------------------
     # Estados fijos
@@ -61,6 +85,10 @@ class LEDController:
     def set_tutoring(self) -> None:
         self._stop_flash()
         self._set(False, False, True)    # azul
+
+    def set_bored(self) -> None:
+        self._stop_flash()
+        self._set(False, True, True)     # cyan (verde+azul)
 
     def set_white(self) -> None:
         """Blanco: pregunta activa, esperando respuesta."""
@@ -142,6 +170,15 @@ class LEDController:
 
     def cleanup(self) -> None:
         self._stop_flash()
-        self.turn_off()
+        try:
+            self.turn_off()
+        except Exception:
+            pass
         if self._gpio_available:
-            self._GPIO.cleanup()
+            try:
+                if self._h is not None:
+                    self._lgpio.gpiochip_close(self._h)
+                elif hasattr(self, "_GPIO"):
+                    self._GPIO.cleanup()
+            except Exception:
+                pass

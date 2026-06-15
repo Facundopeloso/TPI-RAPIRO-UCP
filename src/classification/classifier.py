@@ -50,9 +50,19 @@ class StudentClassifier:
     def _load_model(self) -> None:
         try:
             import tflite_runtime.interpreter as tflite
+            logger.info("Backend: tflite_runtime")
         except ImportError:
-            import tensorflow as tf
-            tflite = tf.lite
+            try:
+                import ai_edge_litert.interpreter as tflite
+                logger.info("Backend: ai_edge_litert")
+            except ImportError:
+                try:
+                    import tensorflow as tf
+                    tflite = tf.lite
+                    logger.info("Backend: tensorflow")
+                except ImportError:
+                    from src.classification import tflite_ctypes as tflite
+                    logger.info("Backend: ctypes libtensorflow-lite.so")
 
         self._interpreter = tflite.Interpreter(model_path=self.model_path)
         self._interpreter.allocate_tensors()
@@ -63,22 +73,45 @@ class StudentClassifier:
     def predict(self, frame: np.ndarray) -> "ClassificationResult | None":
         t_start = time.perf_counter()
 
-        input_tensor = preprocess_frame(frame)
+        input_tensor = preprocess_frame(frame)  # float32 [0,1], shape (1,H,W,3)
 
-        self._interpreter.set_tensor(self._input_details[0]["index"], input_tensor)
+        # Cuantizar si el modelo espera INT8 o UINT8
+        in_det = self._input_details[0]
+        if in_det["dtype"] == np.int8:
+            scale, zero_point = in_det["quantization"]
+            if scale == 0:
+                scale = 1.0 / 127.5
+                zero_point = -1
+            input_tensor = np.clip(
+                np.round(input_tensor / scale + zero_point), -128, 127
+            ).astype(np.int8)
+        elif in_det["dtype"] == np.uint8:
+            input_tensor = (input_tensor * 255).clip(0, 255).astype(np.uint8)
+
+        self._interpreter.set_tensor(in_det["index"], input_tensor)
         self._interpreter.invoke()
         output = self._interpreter.get_tensor(self._output_details[0]["index"])
 
         latency_ms = (time.perf_counter() - t_start) * 1000
+
+        # Descuantizar salida si es INT8
+        out_det = self._output_details[0]
+        if out_det["dtype"] in (np.int8, np.uint8):
+            o_scale, o_zero = out_det["quantization"]
+            if o_scale == 0:
+                o_scale = 1.0
+            output = (output.astype(np.float32) - o_zero) * o_scale
 
         probabilities = output[0]
         class_id = int(np.argmax(probabilities))
         confidence = float(probabilities[class_id])
 
         result = ClassificationResult(class_id, confidence, latency_ms)
-        logger.debug("Predicción: %s", result)
+        logger.info("Predicción: clase=%d (%s) conf=%.2f lat=%.1fms",
+                    class_id, result.label, confidence, latency_ms)
 
         if confidence < self.min_confidence:
+            logger.debug("Confianza baja (%.2f < %.2f) — ignorado.", confidence, self.min_confidence)
             return None
 
         return result

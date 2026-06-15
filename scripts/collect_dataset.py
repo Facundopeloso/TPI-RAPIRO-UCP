@@ -148,10 +148,11 @@ def print_stats(counts: dict[int, int]):
     print(f"  Meta recomendada: 150 por clase (750 total)\n")
 
 
-def main(camera_index: int):
-    cap = cv2.VideoCapture(camera_index)
+def main(camera_index):
+    source = int(camera_index) if str(camera_index).isdigit() else camera_index
+    cap = cv2.VideoCapture(source)
     if not cap.isOpened():
-        print(f"Error: no se pudo abrir cámara {camera_index}")
+        print(f"Error: no se pudo abrir cámara {source}")
         sys.exit(1)
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
@@ -325,7 +326,7 @@ def sync_to_drive():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--camera", type=int, default=0)
+    parser.add_argument("--camera", default="0")
     parser.add_argument("--upload", action="store_true",
                         help="Subir imágenes a Google Drive al salir")
     args = parser.parse_args()

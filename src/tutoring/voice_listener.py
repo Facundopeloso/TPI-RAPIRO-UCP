@@ -27,14 +27,35 @@ class VoiceListener:
 
     def _init_audio(self) -> bool:
         try:
+            import os
             import speech_recognition as sr
             self._recognizer = sr.Recognizer()
             self._recognizer.energy_threshold = 300
+            self._recognizer.dynamic_energy_threshold = True
             self._recognizer.pause_threshold = 1.0
-            self._mic = sr.Microphone()
-            # Ajustar al ruido ambiente al iniciar
-            with self._mic as source:
-                self._recognizer.adjust_for_ambient_noise(source, duration=1)
+
+            env_idx = os.getenv("VOICE_DEVICE_INDEX")
+            if env_idx is not None:
+                device_index = int(env_idx)
+                logger.info("Micrófono: device_index=%d (VOICE_DEVICE_INDEX)", device_index)
+            else:
+                import pyaudio
+                device_index = None
+                try:
+                    with sr.Microphone():
+                        pass
+                except OSError:
+                    pa = pyaudio.PyAudio()
+                    for i in range(pa.get_device_count()):
+                        if pa.get_device_info_by_index(i)["maxInputChannels"] > 0:
+                            device_index = i
+                            break
+                    pa.terminate()
+                    if device_index is None:
+                        raise OSError("No hay dispositivos de entrada de audio")
+                    logger.info("Usando dispositivo de entrada #%d", device_index)
+
+            self._mic = sr.Microphone(device_index=device_index)
             logger.info("Micrófono inicializado. Hotword: '%s'", TUTOR_HOTWORD)
             return True
         except ImportError:
@@ -60,39 +81,42 @@ class VoiceListener:
     def _listen_loop(self) -> None:
         import speech_recognition as sr
 
-        while self._running:
-            try:
-                with self._mic as source:
-                    audio = self._recognizer.listen(source, timeout=5, phrase_time_limit=8)
+        try:
+            with self._mic as source:
+                self._recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                logger.info("Ajuste de ruido ambiental listo.")
+                while self._running:
+                    try:
+                        audio = self._recognizer.listen(source, timeout=5, phrase_time_limit=8)
+                        text = self._recognizer.recognize_google(
+                            audio, language=self._language
+                        ).lower()
+                        logger.info("Escuchado: '%s'", text)
 
-                text = self._recognizer.recognize_google(
-                    audio, language=self._language
-                ).lower()
-                logger.debug("Escuchado: '%s'", text)
+                        if self._hotword in text:
+                            logger.info("Hotword detectado.")
+                            question = self._capture_question(source)
+                            if question:
+                                self._on_question(question)
 
-                if self._hotword in text:
-                    logger.info("Hotword detectado.")
-                    question = self._capture_question()
-                    if question:
-                        self._on_question(question)
+                    except sr.WaitTimeoutError:
+                        pass
+                    except sr.UnknownValueError:
+                        pass
+                    except sr.RequestError as exc:
+                        logger.warning("Error reconocimiento: %s", exc)
+                    except Exception as exc:
+                        logger.error("Error en loop: %s", exc)
+        except Exception as exc:
+            logger.error("Error abriendo micrófono: %s", exc)
 
-            except sr.WaitTimeoutError:
-                pass
-            except sr.UnknownValueError:
-                pass
-            except sr.RequestError as exc:
-                logger.warning("Error en reconocimiento de voz: %s", exc)
-            except Exception as exc:
-                logger.error("Error en loop de escucha: %s", exc)
-
-    def _capture_question(self) -> str:
-        """Graba la pregunta después de detectar el hotword."""
+    def _capture_question(self, source) -> str:
+        """Graba la pregunta después de detectar el hotword (micrófono ya abierto)."""
         import speech_recognition as sr
 
         logger.info("Esperando pregunta...")
         try:
-            with self._mic as source:
-                audio = self._recognizer.listen(source, timeout=5, phrase_time_limit=15)
+            audio = self._recognizer.listen(source, timeout=5, phrase_time_limit=15)
             question = self._recognizer.recognize_google(audio, language=self._language)
             logger.info("Pregunta capturada: '%s'", question)
             return question

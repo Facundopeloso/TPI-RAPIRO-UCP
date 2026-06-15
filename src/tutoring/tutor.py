@@ -388,7 +388,15 @@ class IntelligentTutor:
         if not text:
             return
 
-        # Intentar pygame + gTTS (Linux / Raspberry Pi)
+        # 1. Amazon Polly (cloud, mejor calidad)
+        try:
+            from src.tutoring.polly_tts import speak as polly_speak
+            polly_speak(text)
+            return
+        except Exception as exc:
+            logger.warning("Polly TTS falló: %s — intentando gTTS.", exc)
+
+        # 2. pygame + gTTS (Linux / Raspberry Pi, requiere internet)
         try:
             import io
             import pygame
@@ -411,12 +419,11 @@ class IntelligentTutor:
         except Exception as exc:
             logger.warning("pygame/gTTS falló: %s — intentando pyttsx3.", exc)
 
-        # Fallback: pyttsx3 (Windows, sin dependencias nativas)
+        # 3. Fallback: pyttsx3 (Windows, sin dependencias nativas)
         try:
             import pyttsx3
             engine = pyttsx3.init()
             engine.setProperty("rate", 160)
-            # Buscar voz en español si está disponible
             for voice in engine.getProperty("voices"):
                 if "es" in voice.id.lower() or "spanish" in voice.name.lower():
                     engine.setProperty("voice", voice.id)

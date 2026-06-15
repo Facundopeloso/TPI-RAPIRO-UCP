@@ -29,6 +29,8 @@ class RAPIROController:
         self._servos = ServoController()
         self._do_not_disturb = False
         self._dnd_timer: threading.Timer | None = None
+        self._last_class_id: int = CLASS_STUDYING
+        self._servos.neutral()
 
     # ==================================================================
     # CLASIFICADOR — reacciones según estado detectado
@@ -39,7 +41,7 @@ class RAPIROController:
         if self._do_not_disturb:
             logger.debug("Modo no molestar activo — sin reacción.")
             return
-
+        self._last_class_id = class_id
         if class_id == CLASS_STUDYING:
             self._react_studying()
         elif class_id == CLASS_PHONE:
@@ -54,67 +56,52 @@ class RAPIROController:
             logger.warning("Clase desconocida: %d", class_id)
 
     def _react_studying(self) -> None:
-        """Verde + neutro: todo bien, el estudiante está concentrado."""
         self._leds.set_studying()
-        self._servos.neutral()
-        logger.debug("Reaccion: estudiando.")
+        self._servos.react_studying()
+        logger.info("Reaccion: estudiando — LED VERDE.")
 
     def _react_phone(self) -> None:
-        """Amarillo + sacude cabeza: detectó uso del celular."""
         self._leds.set_phone()
-        self._servos.head_shake()
-        logger.debug("Reaccion: celular detectado.")
+        self._servos.react_phone()
+        logger.info("Reaccion: celular — LED AMARILLO.")
 
     def _react_absent(self) -> None:
-        """Rojo + pose de alerta: puesto vacío."""
         self._leds.set_absent()
-        self._servos.alert_pose()
-        logger.debug("Reaccion: ausente.")
+        self._servos.react_absent()
+        logger.info("Reaccion: ausente — LED ROJO.")
 
     def react_confused(self) -> None:
-        """Azul parpadeante + think: estudiante confundido → RAPIRO va a re-explicar."""
-        self._leds.flash_blue(times=2, interval=0.3)
-        self._servos.think()
-        logger.info("Reaccion: confundido detectado.")
+        self._leds.set_tutoring()
+        self._servos.react_confused()
+        logger.info("Reaccion: confundido — LED AZUL.")
 
     def react_bored(self) -> None:
-        """Amarillo + sacude cabeza: estudiante aburrido → RAPIRO activa quiz."""
-        self._leds.set_phone()
-        self._servos.head_shake()
-        logger.info("Reaccion: aburrido detectado.")
+        self._leds.set_bored()
+        self._servos.react_bored()
+        logger.info("Reaccion: aburrido — LED CYAN.")
 
     # ==================================================================
     # TUTOR — reacciones durante la sesión de tutoría
     # ==================================================================
 
     def react_explaining(self) -> None:
-        """Azul + mira al usuario: RAPIRO está explicando un tema."""
-        self._leds.set_tutoring()
-        self._servos.look_at_user()
+        self._servos.react_explaining()
         logger.debug("Reaccion tutor: explicando.")
 
     def react_thinking(self) -> None:
-        """Azul parpadeante + pose de pensar: generando quiz o procesando."""
-        self._leds.flash_blue(times=2, interval=0.4)
-        self._servos.think()
+        self._servos.react_confused()
         logger.debug("Reaccion tutor: pensando.")
 
     def react_asking_question(self) -> None:
-        """Blanco + escuchando: pregunta activa, esperando respuesta."""
-        self._leds.set_white()
-        self._servos.listen()
+        self._servos.react_listening()
         logger.debug("Reaccion tutor: haciendo pregunta.")
 
     def react_correct_answer(self) -> None:
-        """Verde flash + celebración: respuesta correcta."""
-        self._leds.flash_green(times=3, interval=0.2)
-        self._servos.celebrate()
+        self._servos.react_correct()
         logger.info("Reaccion tutor: respuesta CORRECTA.")
 
     def react_wrong_answer(self) -> None:
-        """Amarillo + empatía: respuesta incorrecta, sin juzgar."""
-        self._leds.set_wrong()
-        self._servos.empathize()
+        self._servos.react_wrong()
         logger.info("Reaccion tutor: respuesta INCORRECTA.")
 
     def react_quiz_score(self, score_pct: float) -> None:
@@ -138,9 +125,8 @@ class RAPIROController:
             logger.info("Quiz score %.0f%% — apoyo.", score_pct * 100)
 
     def react_speaking(self) -> None:
-        """Azul + mira usuario: RAPIRO está hablando por TTS."""
-        self._leds.set_tutoring()
-        self._servos.look_at_user()
+        """No cambia LED ni servo — preserva estado actual."""
+        pass
 
     def react_nod(self) -> None:
         """Asiente: confirmación o acuerdo."""
@@ -163,9 +149,19 @@ class RAPIROController:
         logger.info("Reaccion voz: hotword detectado.")
 
     def stop_listening_effect(self) -> None:
-        """Detiene el pulso azul y vuelve al estado de estudio."""
-        self._leds.set_studying()
-        self._servos.neutral()
+        """Restaura el color del último estado detectado. No mueve servos (react_speaking es pass)."""
+        self._restore_led()
+
+    def _restore_led(self) -> None:
+        if self._last_class_id == CLASS_STUDYING:
+            self._leds.set_studying()
+            self._servos.ojos(0, 200, 0)
+        elif self._last_class_id == CLASS_PHONE:
+            self._leds.set_phone()
+            self._servos.ojos(200, 200, 0)
+        elif self._last_class_id == CLASS_ABSENT:
+            self._leds.set_absent()
+            self._servos.ojos(200, 0, 0)
 
     # ==================================================================
     # TUTORÍA (compatibilidad con main.py existente)

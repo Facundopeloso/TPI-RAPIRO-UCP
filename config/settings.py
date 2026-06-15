@@ -12,8 +12,8 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 # HARDWARE
 # ---------------------------------------------------------------------------
-SERIAL_PORT = os.getenv("SERIAL_PORT", "/dev/ttyUSB0")
-SERIAL_BAUD_RATE = int(os.getenv("SERIAL_BAUD_RATE", "9600"))
+SERIAL_PORT = os.getenv("SERIAL_PORT", "/dev/ttyAMA0")
+SERIAL_BAUD_RATE = int(os.getenv("SERIAL_BAUD_RATE", "57600"))
 CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
 CAMERA_FPS = int(os.getenv("CAMERA_FPS", "2"))
 
@@ -32,7 +32,7 @@ DO_NOT_DISTURB_DURATION_SEC = int(os.getenv("DO_NOT_DISTURB_DURATION_SEC", "600"
 MODEL_PATH = os.getenv("MODEL_PATH", "models/mobilenetv2_int8.tflite")
 INPUT_SIZE = (224, 224)
 NUM_CLASSES = 5
-MIN_CONFIDENCE = float(os.getenv("MIN_CONFIDENCE", "0.70"))
+MIN_CONFIDENCE = float(os.getenv("MIN_CONFIDENCE", "0.35"))
 
 # Clases del clasificador
 CLASS_STUDYING = 0
@@ -51,14 +51,16 @@ CLASS_LABELS = {
 # ---------------------------------------------------------------------------
 # CLOUD — AWS
 # ---------------------------------------------------------------------------
-AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+AWS_REGION = os.getenv("AWS_REGION", "sa-east-1")
 AWS_IOT_ENDPOINT = os.getenv("AWS_IOT_ENDPOINT", "")
 AWS_IOT_TOPIC = os.getenv("AWS_IOT_TOPIC", "rapiro/events")
 AWS_IOT_CERT_PATH = os.getenv("AWS_IOT_CERT_PATH", "certs/certificate.pem.crt")
 AWS_IOT_KEY_PATH = os.getenv("AWS_IOT_KEY_PATH", "certs/private.pem.key")
 AWS_IOT_CA_PATH = os.getenv("AWS_IOT_CA_PATH", "certs/AmazonRootCA1.pem")
-AWS_DYNAMODB_TABLE = os.getenv("AWS_DYNAMODB_TABLE", "rapiro_sessions")
-AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET", "rapiro-user-documents")
+AWS_DYNAMODB_TABLE = os.getenv("AWS_DYNAMODB_TABLE", "rapiro_sessions_dev")
+AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET", "rapiro-user-documents-dev")
+AWS_INFERENCE_LAMBDA = os.getenv("AWS_INFERENCE_LAMBDA", "rapiro-inference-dev")
+AWS_MODEL_BUCKET = os.getenv("AWS_MODEL_BUCKET", "")
 
 # Throttling MQTT: máximo 1 mensaje cada N segundos
 MQTT_THROTTLE_SECONDS = int(os.getenv("MQTT_THROTTLE_SECONDS", "5"))
