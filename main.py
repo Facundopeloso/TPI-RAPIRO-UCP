@@ -32,30 +32,61 @@ _SPEAK_COOLDOWN = float(os.getenv("SPEAK_COOLDOWN", "90"))
 _last_spoken: dict[int, float] = {}
 _current_class: list[int] = [-1]  # mutable para que threads lean estado actual
 
-_STATE_PROMPTS = {
-    CLASS_PHONE: (
-        "Sos RAPIRO, un robot compañero de estudio. Detectaste que el estudiante está mirando el celular. "
-        "Decile algo corto y amigable para que lo deje y vuelva a estudiar. "
-        "Máximo 2 oraciones, español rioplatense, sin markdown."
-    ),
-    CLASS_ABSENT: (
-        "Sos RAPIRO, un robot compañero de estudio. El estudiante lleva un rato sin estar en su puesto. "
-        "Mandá un mensaje corto para que vuelva. "
-        "Máximo 2 oraciones, español rioplatense, sin markdown."
-    ),
-}
+_study_material: list = [""]  # cargado una vez al arrancar
 
 
-def _load_study_notes() -> str:
-    """Carga study_notes.txt si existe (contexto opcional para Claude)."""
+def _load_study_material() -> str:
+    """Descarga el documento más reciente del S3 bucket de estudio."""
+    bucket = os.getenv("S3_BUCKET", "rapiro-user-documents-dev-442650748881")
+    if not bucket:
+        return ""
     try:
-        with open("study_notes.txt", encoding="utf-8") as f:
-            return f.read(2000)
-    except FileNotFoundError:
-        return ""
+        import boto3
+        s3 = boto3.client("s3", region_name=os.getenv("AWS_REGION", "sa-east-1"))
+        resp = s3.list_objects_v2(Bucket=bucket)
+        objs = resp.get("Contents", [])
+        if not objs:
+            return ""
+        latest = sorted(objs, key=lambda x: x["LastModified"], reverse=True)[0]
+        key = latest["Key"]
+        body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+        text = body.decode("utf-8", errors="replace")
+        logger.info("Material de estudio cargado: %s (%d chars)", key, len(text))
+        return text[:2000]
     except Exception as exc:
-        logger.debug("No se pudo leer study_notes.txt: %s", exc)
+        logger.warning("No se pudo cargar material S3: %s", exc)
         return ""
+
+
+def _build_prompt(class_id: int) -> str:
+    material = _study_material[0]
+    if class_id == CLASS_PHONE:
+        if material:
+            return (
+                f"Sos RAPIRO, un robot compañero de estudio. El estudiante está mirando el celular "
+                f"en vez de estudiar. El tema que está estudiando es:\n\n{material[:800]}\n\n"
+                "Decile algo corto y motivador relacionado al tema para que deje el celu y vuelva a estudiar. "
+                "Máximo 2 oraciones, español rioplatense, sin markdown."
+            )
+        return (
+            "Sos RAPIRO, un robot compañero de estudio. Detectaste que el estudiante está mirando el celular. "
+            "Decile algo corto y amigable para que lo deje y vuelva a estudiar. "
+            "Máximo 2 oraciones, español rioplatense, sin markdown."
+        )
+    if class_id == CLASS_ABSENT:
+        if material:
+            return (
+                f"Sos RAPIRO, un robot compañero de estudio. El estudiante se fue de su puesto. "
+                f"El tema que está estudiando es:\n\n{material[:800]}\n\n"
+                "Mandá un mensaje corto mencionando el tema para que vuelva. "
+                "Máximo 2 oraciones, español rioplatense, sin markdown."
+            )
+        return (
+            "Sos RAPIRO, un robot compañero de estudio. El estudiante lleva un rato sin estar en su puesto. "
+            "Mandá un mensaje corto para que vuelva. "
+            "Máximo 2 oraciones, español rioplatense, sin markdown."
+        )
+    return ""
 
 
 def _speak_for_state(class_id: int, rapiro) -> None:
@@ -63,15 +94,9 @@ def _speak_for_state(class_id: int, rapiro) -> None:
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return
-    base_prompt = _STATE_PROMPTS.get(class_id)
-    if not base_prompt:
+    prompt = _build_prompt(class_id)
+    if not prompt:
         return
-
-    notes = _load_study_notes()
-    prompt = (
-        f"Material de estudio del alumno:\n{notes}\n\n{base_prompt}"
-        if notes else base_prompt
-    )
 
     try:
         import anthropic
@@ -84,7 +109,6 @@ def _speak_for_state(class_id: int, rapiro) -> None:
         )
         answer = resp.content[0].text.strip()
         logger.info("Tutor (clase=%d): %s", class_id, answer[:120])
-        # Verificar que el estado no cambió mientras Claude respondía
         if _current_class[0] != class_id:
             logger.info("Estado cambió durante respuesta Claude (era=%d, ahora=%d) — skip audio.", class_id, _current_class[0])
             return
@@ -114,6 +138,9 @@ def main() -> None:
     classifier = StudentClassifier()
     cloud = Boto3Publisher() if not args.no_cloud else None
 
+    # Cargar material de estudio desde S3 en background (no bloquea el arranque)
+    threading.Thread(target=lambda: _study_material.__setitem__(0, _load_study_material()), daemon=True).start()
+
     def shutdown(sig, frame):
         logger.info("Señal de apagado recibida. Cerrando...")
         if cloud:
@@ -130,15 +157,13 @@ def main() -> None:
     last_class_id: int = -1
     pending_class_id: int = -1
     pending_count: int = 0
-    CONFIRM_CYCLES = 2  # detectar mismo estado N veces seguidas antes de cambiar
+    CONFIRM_CYCLES = 1  # detectar mismo estado N veces seguidas antes de cambiar
 
     with CameraCapture() as camera:
         logger.info("Pipeline activo. Procesando frames...")
 
         for frame in camera.frames():
             result = classifier.predict(frame)
-
-            time.sleep(8)
 
             if result is None:
                 continue

@@ -64,7 +64,7 @@ class StudentClassifier:
                     from src.classification import tflite_ctypes as tflite
                     logger.info("Backend: ctypes libtensorflow-lite.so")
 
-        self._interpreter = tflite.Interpreter(model_path=self.model_path)
+        self._interpreter = tflite.Interpreter(model_path=self.model_path, num_threads=4)
         self._interpreter.allocate_tensors()
         self._input_details = self._interpreter.get_input_details()
         self._output_details = self._interpreter.get_output_details()

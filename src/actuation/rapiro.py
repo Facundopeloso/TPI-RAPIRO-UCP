@@ -54,6 +54,8 @@ class RAPIROController:
             self.react_bored()
         else:
             logger.warning("Clase desconocida: %d", class_id)
+        # Restaurar color persistente después de que termina la animación (#M0 la resetea a azul)
+        threading.Timer(4.5, self._restore_led).start()
 
     def _react_studying(self) -> None:
         self._leds.set_studying()
@@ -153,15 +155,16 @@ class RAPIROController:
         self._restore_led()
 
     def _restore_led(self) -> None:
+        # duration_ms=30000 → T300 → Arduino sostiene 30s hasta el próximo ciclo
         if self._last_class_id == CLASS_STUDYING:
             self._leds.set_studying()
-            self._servos.ojos(0, 200, 0)
+            self._servos.ojos(0, 200, 0, duration_ms=30000)
         elif self._last_class_id == CLASS_PHONE:
             self._leds.set_phone()
-            self._servos.ojos(200, 200, 0)
+            self._servos.ojos(200, 200, 0, duration_ms=30000)
         elif self._last_class_id == CLASS_ABSENT:
             self._leds.set_absent()
-            self._servos.ojos(200, 0, 0)
+            self._servos.ojos(200, 0, 0, duration_ms=30000)
 
     # ==================================================================
     # TUTORÍA (compatibilidad con main.py existente)
