@@ -6,6 +6,6 @@ services:
     environment:
       - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-sa-east-1}
       - DYNAMODB_TABLE=${DYNAMODB_TABLE:-rapiro_sessions_dev}
-      - S3_BUCKET=${S3_BUCKET:-}
+      - S3_BUCKET=${S3_BUCKET:-rapiro-user-documents-dev-442650748881}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     restart: unless-stopped

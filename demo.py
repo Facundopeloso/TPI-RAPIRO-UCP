@@ -137,12 +137,59 @@ class SimulatedRAPIRO:
         pass
 
 
+def _load_study_material() -> str:
+    """Descarga el documento más reciente del S3 bucket. Retorna texto (máx 2000 chars)."""
+    bucket = os.getenv("S3_BUCKET", "rapiro-user-documents-dev-442650748881")
+    if not bucket:
+        return ""
+    try:
+        import boto3
+        s3 = boto3.client("s3", region_name=os.getenv("AWS_REGION", "sa-east-1"))
+        resp = s3.list_objects_v2(Bucket=bucket)
+        objs = resp.get("Contents", [])
+        if not objs:
+            return ""
+        latest = sorted(objs, key=lambda x: x["LastModified"], reverse=True)[0]
+        key = latest["Key"]
+        body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+        text = body.decode("utf-8", errors="replace")
+        print(f"{GREEN}OK Material de estudio cargado: {key} ({len(text)} chars){RESET}")
+        return text[:2000]
+    except Exception as e:
+        print(f"{YELLOW}!! No se pudo cargar material S3: {e}{RESET}")
+        return ""
+
+
+def _build_prompt(class_id: int, material: str) -> str:
+    base = _STATE_PROMPTS.get(class_id, "")
+    if not material:
+        return base
+    if class_id == CLASS_PHONE:
+        return (
+            f"Sos RAPIRO, un robot compañero de estudio. El estudiante está mirando el celular "
+            f"en vez de estudiar. El tema que está estudiando es:\n\n{material[:800]}\n\n"
+            "Decile algo corto y motivador relacionado al tema para que deje el celu y vuelva a estudiar. "
+            "Máximo 2 oraciones, español rioplatense, sin markdown."
+        )
+    if class_id == CLASS_ABSENT:
+        return (
+            f"Sos RAPIRO, un robot compañero de estudio. El estudiante se fue de su puesto. "
+            f"El tema que está estudiando es:\n\n{material[:800]}\n\n"
+            "Mandá un mensaje corto mencionando el tema para que vuelva. "
+            "Máximo 2 oraciones, español rioplatense, sin markdown."
+        )
+    return base
+
+
+_study_material: list = [""]  # cargado una vez al arrancar
+
+
 def _speak_for_state_demo(class_id: int) -> None:
     """Llama Claude Haiku → Polly TTS. Corre en daemon thread."""
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return
-    prompt = _STATE_PROMPTS.get(class_id)
+    prompt = _build_prompt(class_id, _study_material[0])
     if not prompt:
         return
     try:
@@ -157,6 +204,7 @@ def _speak_for_state_demo(class_id: int) -> None:
         if _current_class[0] != class_id:
             print(f"  {GRAY}[TTS] Estado cambió — skip audio.{RESET}")
             return
+        print(f"  {BLUE}[RAPIRO] {text}{RESET}")
         from src.tutoring.polly_tts import speak as polly_speak
         polly_speak(text)
     except Exception as exc:
@@ -482,6 +530,11 @@ def run_demo(fixed_class: int | None, no_cam: bool, interval: float):
         print(f"{GREEN}OK DynamoDB conectado{RESET}")
     except Exception as e:
         print(f"{YELLOW}!! DynamoDB no disponible: {e}{RESET}")
+
+    # Cargar material de estudio desde S3 en background
+    def _fetch_material():
+        _study_material[0] = _load_study_material()
+    threading.Thread(target=_fetch_material, daemon=True).start()
 
     print(f"\n{GRAY}Presioná ESC, cerrá la ventana, o Ctrl+C para detener.\n{RESET}")
 

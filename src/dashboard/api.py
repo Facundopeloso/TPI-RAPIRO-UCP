@@ -214,7 +214,7 @@ tr:hover td{background:#0f172a}
 <main>
   <div id="upload-msg"></div>
   <div class="upload-zone" id="drop-zone" onclick="document.getElementById('file-input').click()"
-       ondragover="ev.preventDefault();this.classList.add('drag')"
+       ondragover="event.preventDefault();this.classList.add('drag')"
        ondragleave="this.classList.remove('drag')"
        ondrop="handleDrop(event)">
     <input type="file" id="file-input" accept=".pdf,.txt" onchange="handleFile(this.files[0])">
