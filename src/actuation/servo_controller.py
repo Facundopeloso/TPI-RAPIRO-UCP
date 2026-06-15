@@ -93,12 +93,28 @@ class ServoController:
         ])
 
     def react_phone(self) -> None:
-        """Amarillo + levanta brazo derecho + vuelve."""
-        self._run([(_led_cmd(200, 200, 0), 0.3), ("#M6", 2.0), ("#M0", 1.0)])
+        """Amarillo + sacude cabeza rapido (no,no,no) + brazo arriba."""
+        self._run([
+            (_led_cmd(200, 200, 0), 0.3),
+            ("#PS00A060T003", 0.35),
+            ("#PS00A120T003", 0.35),
+            ("#PS00A060T003", 0.35),
+            ("#PS00A120T003", 0.35),
+            ("#PS00A090T003", 0.3),
+            ("#M6", 1.5),
+            ("#M0", 1.0),
+        ])
 
     def react_absent(self) -> None:
-        """Rojo + ambos brazos arriba + vuelve."""
-        self._run([(_led_cmd(200, 0, 0), 0.3), ("#M5", 2.0), ("#M0", 1.5)])
+        """Rojo + brazos arriba + busca lento izquierda-derecha."""
+        self._run([
+            (_led_cmd(200, 0, 0), 0.3),
+            ("#M5", 1.5),
+            ("#PS00A055T006", 0.7),
+            ("#PS00A125T006", 0.7),
+            ("#PS00A090T005", 0.5),
+            ("#M0", 1.5),
+        ])
 
     def react_confused(self) -> None:
         """Azul + ladea + brazo derecho arriba."""
