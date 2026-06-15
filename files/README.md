@@ -1,11 +1,11 @@
-# 🤖 RAPIRO Guardián de Distracción
+# RAPIRO Guardian de Distracción
 
-Sistema inteligente de monitoreo conductual y tutoría adaptativa basado en el robot RAPIRO.  
+Sistema de monitoreo conductual en tiempo real sobre el robot RAPIRO.  
 **TPI Intercátedra 5to año — ISI — Universidad de la Cuenca del Plata — 2026**
 
 ---
 
-## 👥 Equipo
+## Equipo
 
 | Integrante | Rol | Responsabilidades |
 |---|---|---|
@@ -15,230 +15,213 @@ Sistema inteligente de monitoreo conductual y tutoría adaptativa basado en el r
 
 ---
 
-## 📋 Descripción
+## Descripción
 
-RAPIRO Guardián detecta en tiempo real si un estudiante está concentrado, usando el celular o ausente, usando visión por computadora sobre Raspberry Pi 4. Según la situación, actúa físicamente (LEDs, servos), registra eventos en AWS y ofrece asistencia tutorial mediante un LLM contextualizado al material de estudio del usuario.
+RAPIRO Guardián detecta en tiempo real si un estudiante está concentrado, usando el celular o ausente, mediante visión por computadora sobre Raspberry Pi 2B. Según el estado detectado, el robot reacciona físicamente (LEDs GPIO + 12 servos vía serial Arduino), registra eventos en AWS y genera consejos de estudio personalizados mediante Claude Haiku con texto a voz por Amazon Polly.
 
 ---
 
-## 🗂 Estructura del Proyecto
+## Hardware Real
+
+- **Raspberry Pi 2B** (ARMv7 quad-core) + microSD 32GB
+- **Robot RAPIRO** con Arduino ATmega32U4 — comunicación UART `/dev/ttyAMA0` @ **57600 baud**
+- **Cámara**: DroidCam (app Android) via red local — stream HTTP `http://192.168.100.6:4747/video`
+- **LEDs RGB**: conectados a GPIO pines 17 (R), 27 (G), 22 (B) del RPi — ánodo común
+- **Audio**: parlante Bluetooth `MM43BT` via PipeWire (`bluez_output.E8_07_BF_00_63_6D.1`)
+
+---
+
+## Estructura del Proyecto
 
 ```
-rapiro_guardian/
-│
+TPI-RAPIRO-UCP/
 ├── src/
 │   ├── perception/          # Captura de video y preprocesamiento
-│   │   ├── __init__.py
-│   │   └── camera.py
-│   │
-│   ├── classification/      # Modelo CNN TFLite — clasificación de estados
-│   │   ├── __init__.py
-│   │   ├── classifier.py
+│   │   ├── camera.py        # Stream DroidCam con hilo drain para frame fresco
 │   │   └── preprocessor.py
 │   │
-│   ├── actuation/           # Control físico del robot RAPIRO
-│   │   ├── __init__.py
-│   │   ├── led_controller.py
-│   │   ├── servo_controller.py
-│   │   └── rapiro.py        # Facade principal del robot
+│   ├── classification/      # Clasificador TFLite INT8
+│   │   ├── classifier.py    # Backends: tflite_runtime / ai_edge_litert / ctypes
+│   │   ├── preprocessor.py
+│   │   └── tflite_ctypes.py # Backend ctypes para RPi sin tflite_runtime
 │   │
-│   ├── tutoring/            # Módulo de tutoría inteligente (LLM + RAG)
-│   │   ├── __init__.py
-│   │   ├── document_processor.py
-│   │   ├── retriever.py
-│   │   └── tutor.py
+│   ├── actuation/           # Control físico del robot
+│   │   ├── led_controller.py  # GPIO RGB via lgpio
+│   │   ├── servo_controller.py # Serial UART 57600 baud → Arduino
+│   │   └── rapiro.py          # Facade: reacciones por estado
 │   │
-│   ├── cloud/               # Integración con AWS
-│   │   ├── __init__.py
-│   │   ├── iot_publisher.py
-│   │   └── s3_manager.py
+│   ├── tutoring/            # Tutor inteligente
+│   │   └── polly_tts.py     # Amazon Polly (voz Pedro neural, us-east-1)
 │   │
-│   └── dashboard/           # Backend API del dashboard web
-│       ├── __init__.py
+│   ├── cloud/               # Integración AWS
+│   │   └── boto3_publisher.py # DynamoDB + IoT Core
+│   │
+│   └── dashboard/           # API backend del dashboard web
 │       └── api.py
 │
-├── tests/
-│   ├── test_classifier.py
-│   ├── test_actuation.py
-│   ├── test_tutoring.py
-│   └── test_cloud.py
-│
-├── terraform/               # Infraestructura como Código (IaC)
-│   ├── main.tf
-│   ├── variables.tf
-│   └── outputs.tf
-│
-├── scripts/
-│   ├── collect_dataset.py   # Herramienta de captura de imágenes para dataset
-│   └── train_model.py       # Entrenamiento del modelo CNN
+├── models/
+│   └── mobilenetv2_int8.tflite  # MobileNetV2 INT8 cuantizado
 │
 ├── config/
-│   └── settings.py          # Configuración centralizada
+│   └── settings.py
 │
-├── main.py                  # Punto de entrada principal
-├── requirements.txt
-├── .env.example
-└── README.md
+├── main.py                  # Punto de entrada (hardware real)
+├── demo.py                  # Modo demo sin hardware (ventana OpenCV)
+├── docker-compose.yml       # Dashboard en EC2
+└── .env                     # Variables de entorno (NO commitear)
 ```
 
 ---
 
-## ⚙️ Requisitos
-
-### Hardware
-- Raspberry Pi 4 (4GB RAM) + microSD 32GB
-- Robot RAPIRO con Arduino integrado
-- Cámara USB Logitech C270 (o similar, 720p)
-
-### Software
-- Python 3.11+
-- Dependencias listadas en `requirements.txt`
-- Cuenta AWS con permisos en IoT Core, Lambda, S3, DynamoDB, CloudWatch
-
-### Instalación
+## Instalación (Raspberry Pi)
 
 ```bash
-# 1. Clonar el repositorio
-git clone https://github.com/equipo-isi/rapiro-guardian.git
-cd rapiro-guardian
-
-# 2. Crear entorno virtual
-python3 -m venv venv
-source venv/bin/activate
-
-# 3. Instalar dependencias
+git clone https://github.com/Facundopeloso/TPI-RAPIRO-UCP.git
+cd TPI-RAPIRO-UCP
 pip install -r requirements.txt
-
-# 4. Configurar variables de entorno
 cp .env.example .env
-# Editar .env con credenciales AWS, puerto serial, etc.
-
-# 5. Desplegar infraestructura AWS
-cd terraform
-terraform init
-terraform apply
-
-# 6. Ejecutar el sistema
-cd ..
+# Editar .env con credenciales AWS
 python main.py
 ```
 
----
-
-## 🧠 Módulos
-
-### `src/perception/` — Captura de Video
-- Captura de fotogramas a 2 FPS con OpenCV
-- Preprocesamiento: resize a 224×224 px, normalización [0,1]
-
-### `src/classification/` — Clasificador CNN
-- Modelo MobileNetV2 con transferencia de aprendizaje, compilado en TFLite INT8
-- Clasifica en 3 estados: **Estudiando** (0), **Usando celular** (1), **Puesto vacío** (2)
-- Accuracy: **89.3%** | Latencia de inferencia: **~157 ms**
-- Umbral de confianza mínima: **70%** (evita falsos positivos)
-
-### `src/actuation/` — Control del Robot
-- LEDs RGB via GPIO (verde / amarillo intermitente / rojo / azul)
-- 12 servos controlados via Arduino (pyserial)
-- Modo "no molestar" activable por botón físico (10 minutos)
-
-### `src/tutoring/` — Tutoría Inteligente
-- Carga de documentos PDF/TXT, segmentación en chunks de 500 palabras
-- Recuperación de contexto relevante mediante TF-IDF simplificado
-- Respuestas generadas por GPT-3.5 Turbo (OpenAI) o Claude Haiku (AWS Bedrock)
-- Speech-to-text (hotword: *"RAPIRO, ayuda"*) + text-to-speech (Google TTS)
-
-### `src/cloud/` — Integración AWS
-- Publicación de eventos MQTT en AWS IoT Core (throttling: 1 mensaje/5 seg)
-- Almacenamiento de documentos en S3
-- Eventos de sesión en DynamoDB
-
-### `terraform/` — IaC
-- Aprovisiona: IoT Core, Lambda (×2), DynamoDB, S3, API Gateway, CloudWatch
-- Estado remoto en S3 con locking en DynamoDB
-- `terraform destroy` para eliminar recursos cuando no se usan
-
----
-
-## 🔁 Flujo Principal
-
-```
-Cámara → Preprocesamiento → Clasificador TFLite
-                                    │
-              ┌─────────────────────┼──────────────────────┐
-           Clase 0              Clase 1                 Clase 2
-         (Estudiando)        (Celular)               (Ausente)
-         LED verde           LED amarillo            LED rojo
-         Neutro              Mueve cabeza            Alerta sonora
-         Log AWS             Alerta AWS              Alerta + SNS
-```
-
----
-
-## 🧪 Tests
+### Requisito de audio Bluetooth
 
 ```bash
-# Ejecutar todos los tests
-pytest tests/ -v
-
-# Con cobertura
-pytest tests/ --cov=src --cov-report=term-missing
+# Emparejar speaker antes de iniciar
+bluetoothctl connect E8:07:BF:00:63:6D
+# PipeWire maneja el routing automáticamente
 ```
 
-Meta de cobertura: **≥ 60%**
+---
+
+## Módulos
+
+### `src/perception/` — Captura de Video
+- Stream DroidCam via HTTP a 2 FPS
+- Hilo daemon drain mantiene el buffer fresco (evita lag acumulado)
+- Preprocesamiento: resize 224×224 px, normalización [0,1]
+
+### `src/classification/` — Clasificador CNN
+- MobileNetV2 INT8 cuantizado con TFLite
+- **3 estados efectivos**: Estudiando (verde), Usando celular (amarillo), Puesto vacío (rojo)
+- Clases 3 y 4 (confundido/aburrido) → mapeadas a Estudiando
+- Latencia real en RPi 2B: **~3.5–5 seg** con 4 threads
+- Umbral de confianza mínima: **20%**
+- Histéresis: `CONFIRM_CYCLES=1` (reacción inmediata)
+
+### `src/actuation/` — Control del Robot
+- **LEDs GPIO** (pines 17/27/22): rojo/verde/amarillo por estado
+- **Servos via serial** `/dev/ttyAMA0` @ **57600 baud** → Arduino ATmega32U4
+- Reacciones diferenciadas:
+  - **Celular** → sacude cabeza rápido (no,no,no) + brazo derecho arriba
+  - **Ausente** → ambos brazos arriba + busca lento izquierda/derecha
+  - **Estudiando** → asiente con la cabeza + LED verde
+- `threading.Timer(4.5s)` restaura color LED persistente tras animación
+
+### `src/tutoring/` — Tutoría con IA
+- **Claude Haiku 4.5** genera consejo contextual en español rioplatense
+- Contexto: material de estudio cargado desde S3 al arrancar
+- **Amazon Polly** voz `Pedro` (neural, us-east-1) → audio por Bluetooth via PipeWire
+- Cooldown: 90 seg por estado (no repite si el estado no cambia)
+- Solo habla para estados "celular" y "ausente"
+
+### `src/cloud/` — Integración AWS
+- **DynamoDB** `rapiro_sessions_dev` (sa-east-1): evento por predicción
+- **IoT Core**: publicación MQTT throttleada a 1 msg/5 seg
+- **S3** `rapiro-user-documents-dev-442650748881`: documentos de estudio del usuario
+
+### Dashboard Web
+- URL: `http://54.94.201.85/` (EC2 + Docker, puerto 80)
+- Sube documentos de estudio → RAPIRO los usa en el próximo consejo
+- API backend en `src/dashboard/api.py`
 
 ---
 
-## 🌩 Infraestructura AWS
+## Flujo Principal
 
-| Servicio | Función | Costo/mes |
-|---|---|---|
-| IoT Core | MQTT desde Raspberry Pi | ~$0.08 |
-| Lambda | Procesamiento de eventos | $0 (free tier) |
-| DynamoDB | Almacenamiento de sesiones | $0 (free tier) |
-| S3 | Documentos de usuario | ~$0.12 |
-| CloudWatch | Logs y dashboards | ~$0.50 |
-| API Gateway | REST API dashboard | $0 (free tier) |
-| **TOTAL** | | **~$1.70/mes** |
+```
+DroidCam → Preprocesamiento → Clasificador TFLite INT8
+                                        │
+              ┌─────────────────────────┼──────────────────────────┐
+           Clase 0,3,4              Clase 1                    Clase 2
+           (Estudiando)           (Celular)                  (Ausente)
+           LED verde              LED amarillo               LED rojo
+           Asiente               Sacude cabeza              Brazos arriba
+                                  + brazo arriba            + busca al costado
+                                  Claude Haiku              Claude Haiku
+                                  → Polly Pedro             → Polly Pedro
+                                  → BT speaker              → BT speaker
+                                        │                        │
+                              DynamoDB + IoT Core          DynamoDB + IoT Core
+```
 
 ---
 
-## 🔐 Variables de Entorno
-
-Ver `.env.example` para la lista completa. Variables críticas:
+## Variables de Entorno (.env)
 
 ```env
-AWS_IOT_ENDPOINT=xxxxx.iot.us-east-1.amazonaws.com
-AWS_REGION=us-east-1
-OPENAI_API_KEY=sk-...
-SERIAL_PORT=/dev/ttyUSB0
-CAMERA_INDEX=0
+# LLM
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Modelo
 MODEL_PATH=models/mobilenetv2_int8.tflite
-MIN_CONFIDENCE=0.70
+MIN_CONFIDENCE=0.20
+
+# Hardware
+SERIAL_PORT=/dev/ttyAMA0
+SERIAL_BAUD_RATE=57600
+CAMERA_URL=http://192.168.100.6:4747/video
+LED_RED_PIN=17
+LED_GREEN_PIN=27
+LED_BLUE_PIN=22
+
+# AWS
+AWS_REGION=sa-east-1
+AWS_DYNAMODB_TABLE=rapiro_sessions_dev
+S3_BUCKET=rapiro-user-documents-dev-442650748881
+
+# Polly TTS
+POLLY_VOICE=Pedro
+POLLY_ENGINE=neural
+# POLLY_REGION se auto-setea en us-east-1 para neural
+
+# Comportamiento
+SPEAK_COOLDOWN=90
+LLM_MODEL=claude-haiku-4-5
 ```
 
 ---
 
-## 📊 Métricas del Prototipo (Etapa 2)
+## Modo Demo (sin hardware)
 
-| Métrica | Meta | Real |
-|---|---|---|
-| Accuracy del modelo | ≥ 85% | **89.3%** ✅ |
-| Latencia de inferencia | ≤ 500 ms | **242 ms** ✅ |
-| Disponibilidad AWS | ≥ 99% | **99.9%** ✅ |
-| Respuestas LLM correctas | ≥ 80% | **86.7%** ✅ |
+```bash
+# Windows/Mac — requiere DroidCam activo
+python demo.py
+```
 
----
-
-## 📄 Licencia
-
-MIT License — libre para uso y replicación por otras instituciones educativas.
+Ejecuta el pipeline completo (clasificador + DynamoDB + Claude + Polly) mostrando una ventana OpenCV que simula los ojos del RAPIRO con colores por estado. No requiere GPIO ni serial.
 
 ---
 
-## 📚 Referencias
+## Infraestructura AWS (sa-east-1)
+
+| Servicio | Función |
+|---|---|
+| IoT Core | MQTT desde RPi |
+| DynamoDB | Sesiones y eventos |
+| S3 | Documentos de estudio del usuario |
+| Lambda | Procesamiento de eventos |
+| API Gateway | REST API dashboard |
+| CloudWatch | Logs |
+| EC2 (t2.micro) | Dashboard web — `54.94.201.85` |
+
+Infraestructura como código en `terraform/`.
+
+---
+
+## Referencias
 
 - Howard, A. et al. (2017). *MobileNets: Efficient Convolutional Neural Networks for Mobile Vision Applications*. arXiv.
-- Redmon, J. et al. (2016). *You Only Look Once: Unified, Real-Time Object Detection*. CVPR.
+- Amazon Polly — Neural TTS Documentation. AWS.
+- Anthropic Claude API Documentation.
 - IEEE Survey on Robotic Tutoring Systems (2022).
-- Capers Jones. *Applied Software Measurement* (3rd ed.).

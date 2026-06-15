@@ -11,8 +11,10 @@ import os
 from config.settings import AWS_REGION
 
 logger    = logging.getLogger(__name__)
-VOICE_ID  = os.getenv("POLLY_VOICE", "Conchita")   # es-ES female, más cercana al castellano rioplatense
+VOICE_ID  = os.getenv("POLLY_VOICE", "Conchita")
 ENGINE    = os.getenv("POLLY_ENGINE", "standard")
+# Neural voices requieren us-east-1 (sa-east-1 no las soporta)
+POLLY_REGION = os.getenv("POLLY_REGION", "us-east-1" if ENGINE == "neural" else AWS_REGION)
 
 _polly = None
 
@@ -21,33 +23,45 @@ def _client():
     global _polly
     if _polly is None:
         import boto3
-        _polly = boto3.client("polly", region_name=AWS_REGION)
+        _polly = boto3.client("polly", region_name=POLLY_REGION)
     return _polly
 
 
 def speak(text: str) -> None:
     """Sintetiza con Polly y reproduce inline. Fallback a pyttsx3."""
+    logger.info("TTS: sintetizando voz=%s engine=%s region=%s", VOICE_ID, ENGINE, POLLY_REGION)
     try:
         resp       = _client().synthesize_speech(
             Text=text, VoiceId=VOICE_ID, OutputFormat="mp3", Engine=ENGINE
         )
         audio_data = resp["AudioStream"].read()
+        logger.info("TTS: Polly OK (%d bytes) — reproduciendo...", len(audio_data))
         _play_mp3(audio_data)
+        logger.info("TTS: reproducción completa.")
     except Exception as exc:
         logger.warning("Polly TTS falló (%s) — usando fallback pyttsx3.", exc)
         _fallback(text)
 
 
+_BT_SINK = "bluez_output.E8_07_BF_00_63_6D.1"
+
 def _play_mp3(data: bytes) -> None:
     import subprocess
     import tempfile
+    env = os.environ.copy()
+    env["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
         f.write(data)
         tmp_path = f.name
     try:
         subprocess.run(
+            ["pw-play", "--target", _BT_SINK, tmp_path],
+            env=env, check=False,
+        )
+    except Exception:
+        subprocess.run(
             ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", tmp_path],
-            check=True,
+            check=False, env=env,
         )
     finally:
         try:
