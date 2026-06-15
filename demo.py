@@ -9,7 +9,7 @@ Uso:
     python demo.py                   # pipeline real (CAMERA_URL del .env)
     python demo.py --no-cam          # frames sintéticos (sin cámara)
     python demo.py --class 1         # fuerza clase fija — modo mock (0/1/2)
-    python demo.py --interval 8      # segundos entre clasificaciones (default: 8)
+    python demo.py --interval 1      # segundos entre clasificaciones (default: 1)
     python demo.py --quiz            # modo tutor interactivo
 
 Requiere .env con: ANTHROPIC_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
@@ -492,7 +492,7 @@ def run_demo(fixed_class: int | None, no_cam: bool, interval: float):
     last_class_id = -1
     pending_class_id = -1
     pending_count = 0
-    CONFIRM_CYCLES = 2
+    CONFIRM_CYCLES = 3
     disp_class = CLASS_STUDYING
     disp_conf = 0.0
     frame_n = 0
@@ -1037,8 +1037,8 @@ def parse_args():
     parser.add_argument("--no-cam",   action="store_true", help="No usar webcam")
     parser.add_argument("--class",    dest="fixed_class", type=int, choices=[0, 1, 2, 3, 4],
                         default=None, help="Forzar clase fija (0=estudio 1=celular 2=ausente 3=confundido 4=aburrido)")
-    parser.add_argument("--interval", type=float, default=8.0,
-                        help="Segundos entre clasificaciones (default: 8)")
+    parser.add_argument("--interval", type=float, default=1.0,
+                        help="Segundos entre clasificaciones (default: 1)")
     parser.add_argument("--quiz",     action="store_true",
                         help="Modo tutor interactivo: explicacion + quiz")
     parser.add_argument("--audio",    action="store_true",
