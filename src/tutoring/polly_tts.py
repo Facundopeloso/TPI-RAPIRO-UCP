@@ -47,22 +47,41 @@ _BT_SINK = "bluez_output.E8_07_BF_00_63_6D.1"
 
 def _play_mp3(data: bytes) -> None:
     import subprocess
+    import sys
     import tempfile
-    env = os.environ.copy()
-    env["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
         f.write(data)
         tmp_path = f.name
     try:
-        subprocess.run(
-            ["pw-play", "--target", _BT_SINK, tmp_path],
-            env=env, check=False,
-        )
-    except Exception:
-        subprocess.run(
-            ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", tmp_path],
-            check=False, env=env,
-        )
+        if sys.platform == "win32":
+            # Windows: PowerShell WPF MediaPlayer (sincrónico)
+            duration = max(3, len(data) // 8000 + 2)
+            fwd = tmp_path.replace("\\", "/")
+            subprocess.run(
+                [
+                    "powershell", "-NoProfile", "-Command",
+                    f"Add-Type -AssemblyName presentationCore;"
+                    f"$mp=[Windows.Media.MediaPlayer]::new();"
+                    f"$mp.Open([Uri]::new('{fwd}'));"
+                    f"$mp.Play();"
+                    f"Start-Sleep -Seconds {duration}",
+                ],
+                check=False,
+            )
+        else:
+            # Linux: pw-play → BT speaker, fallback ffplay
+            env = os.environ.copy()
+            env["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
+            try:
+                subprocess.run(
+                    ["pw-play", "--target", _BT_SINK, tmp_path],
+                    env=env, check=False,
+                )
+            except Exception:
+                subprocess.run(
+                    ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", tmp_path],
+                    check=False, env=env,
+                )
     finally:
         try:
             os.unlink(tmp_path)
