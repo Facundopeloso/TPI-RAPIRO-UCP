@@ -18,7 +18,7 @@ import time
 
 from config.settings import (
     LOG_LEVEL, LOG_FORMAT, ABSENCE_ALERT_THRESHOLD_SEC,
-    CLASS_ABSENT, CLASS_STUDYING, CLASS_PHONE,
+    CLASS_ABSENT, CLASS_STUDYING, CLASS_PHONE, LLM_MODEL,
 )
 from src.perception.camera import CameraCapture
 from src.classification.classifier import StudentClassifier
@@ -103,7 +103,7 @@ def _speak_for_state(class_id: int, rapiro) -> None:
         rapiro.react_speaking()
         client = anthropic.Anthropic(api_key=api_key)
         resp = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model=LLM_MODEL,
             max_tokens=150,
             messages=[{"role": "user", "content": prompt}],
         )
