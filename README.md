@@ -369,7 +369,7 @@ TUTOR_HOTWORD=RAPIRO ayuda
 SPEECH_LANGUAGE=es-AR
 ```
 
-> El `.env.example` del repo está incompleto hoy (sólo tiene un comentario placeholder) — conviene completarlo con esta lista antes de pasarlo al resto del equipo.
+> Esta misma lista ya está en `.env.example` con valores de ejemplo — copiarlo a `.env` y completar `ANTHROPIC_API_KEY` (y `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` si se va a usar Polly o el resto de AWS).
 
 ## 14. Guía paso a paso — instalación y uso
 
@@ -389,12 +389,6 @@ venv\Scripts\activate          # Windows
 
 pip install -r requirements.txt
 ```
-
-> `requirements.txt` no incluye todavía las librerías de voz/TTS (`gtts`, `pygame`, `SpeechRecognition`, `pyaudio`, `pyttsx3`) ni las de Google Drive (`google-api-python-client`, `google-auth-oauthlib`) que sí usan `tutor.py`, `voice_listener.py` y `collect_dataset.py --upload`. Instalarlas aparte si se va a probar voz o sync con Drive:
-> ```bash
-> pip install gtts pygame SpeechRecognition pyaudio pyttsx3
-> pip install google-api-python-client google-auth-oauthlib
-> ```
 
 ```bash
 copy .env.example .env     # Windows
@@ -469,8 +463,7 @@ python -m pytest tests/ --cov=src --cov-report=term-missing
 - **El hardware real (Raspberry Pi 2B+, 512MB RAM, fuente de 12V) es mucho más limitado que el que asumen la mayoría de tutoriales de RPi4** — ver sección 3. No instalar TensorFlow completo, y no conectar más de 3 dispositivos USB a la vez para evitar problemas de alimentación.
 - **Clases 3 y 4 (Confundido/Aburrido) no generan reacción todavía** — ver sección 4. Es intencional, no un bug, hasta tener más fotos de esas clases.
 - **El hotword por voz no está conectado a `main.py`** — funciona y está probado de forma aislada (`test_tutor.py --voice`), pero el pipeline principal de la Raspberry Pi aún no lo inicia automáticamente.
-- **`requirements.txt` incompleto** para todo lo que toca voz/TTS y Google Drive (ver sección 14) — hay que instalarlo a mano por ahora.
-- **`.env.example` desactualizado** — sólo tiene un comentario, conviene completarlo con la lista de la sección 13 antes de repartirlo al equipo.
+- **La reacción a celular/ausente en `main.py`/`demo.py` no tiene la cascada completa de TTS** — llama directo a `polly_tts.speak()`, que sólo tiene 2 niveles (Polly → pyttsx3), sin el paso intermedio de gTTS que sí usa `tutor.py` en los modos de quiz interactivo.
 
 ## 17. Referencias
 
