@@ -326,31 +326,39 @@ const BADGES=["b0","b1","b2"];
 
 async function loadStats(){
   try{
-    const d=await(await fetch("/api/stats")).json();
+    const r=await fetch("/api/stats");
+    if(!r.ok){document.getElementById("total").textContent="HTTP "+r.status;return;}
+    const d=await r.json();
     document.getElementById("total").textContent=d.total_events;
-    const p=d.percentages;
+    const p=d.percentages||{};
     document.getElementById("p0").textContent=(p["Estudiando"]||0)+"%";
     document.getElementById("p1").textContent=(p["Usando celular"]||0)+"%";
-    document.getElementById("p2").textContent=(p["Puesto vacío"]||0)+"%";
+    document.getElementById("p2").textContent=(p["Puesto vac\xEDo"]||0)+"%";
     document.getElementById("bars").innerHTML=LABELS.map((l,i)=>{
-      const v=p[l]||0;
+      const v=(p[l]||0);
       return '<div class="bar-row"><div class="bar-lbl">'+l+'</div>'+
              '<div class="bar-track"><div class="bar-fill" style="width:'+v+'%;background:'+COLORS[i]+'"></div></div>'+
              '<div class="bar-pct">'+v+'%</div></div>';
     }).join("");
-  }catch(e){}
+  }catch(e){document.getElementById("total").textContent="ERR:"+e.message;}
 }
 
 async function loadSessions(){
   try{
-    const d=await(await fetch("/api/sessions")).json();
+    const r=await fetch("/api/sessions");
+    if(!r.ok){
+      document.getElementById("tbody").innerHTML=
+        '<tr><td colspan="5" style="text-align:center;color:#ef4444;padding:2rem">HTTP '+r.status+'</td></tr>';
+      return;
+    }
+    const d=await r.json();
     if(!d.sessions||!d.sessions.length){
       document.getElementById("tbody").innerHTML=
-        '<tr><td colspan="5" style="text-align:center;color:#475569;padding:2rem">Sin eventos aún</td></tr>';
+        '<tr><td colspan="5" style="text-align:center;color:#475569;padding:2rem">Sin eventos a\xFAn</td></tr>';
       return;
     }
     document.getElementById("tbody").innerHTML=d.sessions.slice(0,20).map(s=>{
-      const c=parseInt(s.clase_detectada)||0;
+      const c=Math.min(parseInt(s.clase_detectada)||0,2);
       const ts=(s.timestamp||"—").replace("T"," ").substring(0,19);
       const conf=s.confianza?(parseFloat(s.confianza)*100).toFixed(1)+"%":"—";
       const lat=s.latencia_ms?s.latencia_ms+" ms":"—";
@@ -361,8 +369,11 @@ async function loadSessions(){
              '<td>'+conf+'</td><td>'+lat+'</td></tr>';
     }).join("");
     document.getElementById("foot").textContent=
-      "Última actualización: "+new Date().toLocaleTimeString("es-AR");
-  }catch(e){}
+      "Actualizado: "+new Date().toLocaleTimeString("es-AR");
+  }catch(e){
+    document.getElementById("tbody").innerHTML=
+      '<tr><td colspan="5" style="text-align:center;color:#ef4444;padding:2rem">ERR: '+e.message+'</td></tr>';
+  }
 }
 
 function refreshStats(){loadStats();loadSessions();}
