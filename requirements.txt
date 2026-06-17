@@ -8,6 +8,10 @@ pdfplumber>=0.10
 pytest>=7.4
 pytest-cov>=4.1
 
+# Clasificador: backend TFLite liviano (src/classification/classifier.py)
+# Evita depender de tensorflow completo (pesado y con tf.lite.Interpreter deprecado)
+ai_edge_litert>=1.0
+
 # Voz: TTS y hotword del tutor (src/tutoring/tutor.py, voice_listener.py)
 gtts>=2.4
 pygame>=2.5
