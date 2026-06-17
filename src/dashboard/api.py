@@ -4,12 +4,14 @@ Corre en la EC2 vía Docker. Lee eventos desde DynamoDB usando el
 IAM instance profile (sin credenciales hardcodeadas).
 
 Endpoints:
-  GET /               → dashboard HTML (tabs: Estadísticas + Documentos)
-  GET /api/stats      → distribución de clases en JSON
-  GET /api/sessions   → últimos 50 eventos en JSON
-  GET /api/documents  → lista de documentos en S3
-  POST /upload        → sube un PDF/txt a S3
-  GET /health         → liveness check
+  GET /                        → dashboard HTML (tabs: Estadísticas + Documentos)
+  GET /api/stats               → distribución de clases en JSON
+  GET /api/sessions            → últimos 50 eventos en JSON
+  GET /api/documents           → lista de documentos en S3 (incluye cuál es el activo)
+  POST /upload                 → sube un PDF/txt a S3
+  POST /api/documents/activate → marca un documento como activo (escribe active.txt)
+  DELETE /api/documents        → elimina un documento de S3 (?name=filename.pdf)
+  GET /health                  → liveness check
 """
 
 import os
@@ -18,6 +20,7 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 
 app = FastAPI(title="RAPIRO Dashboard")
 
@@ -32,6 +35,11 @@ _s3       = boto3.client("s3", region_name=REGION)
 CLASS_LABELS   = {0: "Estudiando", 1: "Usando celular", 2: "Puesto vacío"}
 _ALLOWED_TYPES = {"application/pdf", "text/plain"}
 _MAX_BYTES     = 10 * 1024 * 1024  # 10 MB
+_ACTIVE_KEY    = "documents/active.txt"
+
+
+class ActivateRequest(BaseModel):
+    name: str  # nombre del archivo sin prefijo "documents/"
 
 
 # ── API ───────────────────────────────────────────────────────────────────────
@@ -80,21 +88,74 @@ def list_documents():
     if not BUCKET:
         return {"documents": [], "error": "S3_BUCKET no configurado"}
     try:
+        active_name = ""
+        try:
+            body = _s3.get_object(Bucket=BUCKET, Key=_ACTIVE_KEY)["Body"].read()
+            active_name = body.decode("utf-8", errors="replace").strip()
+        except ClientError:
+            pass
+
         resp = _s3.list_objects_v2(Bucket=BUCKET, Prefix="documents/")
         docs = []
         for obj in resp.get("Contents", []):
             key = obj["Key"]
-            if key == "documents/":
+            if key in ("documents/", _ACTIVE_KEY):
                 continue
+            name = key.replace("documents/", "", 1)
             docs.append({
                 "key": key,
-                "name": key.replace("documents/", "", 1),
+                "name": name,
                 "size_kb": round(obj["Size"] / 1024, 1),
                 "last_modified": obj["LastModified"].isoformat(),
+                "active": name == active_name,
             })
-        return {"documents": docs, "count": len(docs)}
+        return {"documents": docs, "count": len(docs), "active": active_name}
     except (BotoCoreError, ClientError) as exc:
         raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.post("/api/documents/activate")
+def activate_document(req: ActivateRequest):
+    if not BUCKET:
+        raise HTTPException(status_code=503, detail="S3_BUCKET no configurado")
+    key = f"documents/{req.name}"
+    try:
+        _s3.head_object(Bucket=BUCKET, Key=key)
+    except ClientError:
+        raise HTTPException(status_code=404, detail=f"Archivo '{req.name}' no encontrado en S3")
+    try:
+        _s3.put_object(
+            Bucket=BUCKET,
+            Key=_ACTIVE_KEY,
+            Body=req.name.encode("utf-8"),
+            ContentType="text/plain",
+        )
+    except (BotoCoreError, ClientError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"ok": True, "active": req.name}
+
+
+@app.delete("/api/documents")
+def delete_document(name: str):
+    if not BUCKET:
+        raise HTTPException(status_code=503, detail="S3_BUCKET no configurado")
+    key = f"documents/{name}"
+    try:
+        _s3.head_object(Bucket=BUCKET, Key=key)
+    except ClientError:
+        raise HTTPException(status_code=404, detail=f"Archivo '{name}' no encontrado en S3")
+    try:
+        _s3.delete_object(Bucket=BUCKET, Key=key)
+        # Si era el activo, borrar active.txt también
+        try:
+            body = _s3.get_object(Bucket=BUCKET, Key=_ACTIVE_KEY)["Body"].read()
+            if body.decode("utf-8", errors="replace").strip() == name:
+                _s3.delete_object(Bucket=BUCKET, Key=_ACTIVE_KEY)
+        except ClientError:
+            pass
+    except (BotoCoreError, ClientError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"ok": True, "deleted": name}
 
 
 @app.post("/upload")
@@ -168,6 +229,11 @@ tr:hover td{background:#0f172a}
 .msg.ok{background:#14532d;color:#86efac}.msg.err{background:#7f1d1d;color:#fca5a5}
 .doc-row td:first-child{font-family:monospace;font-size:.8rem}
 .sz{color:#64748b;font-size:.75rem}
+.act-badge{display:inline-block;padding:.15rem .5rem;border-radius:9999px;font-size:.65rem;font-weight:700;background:#134e4a;color:#5eead4;margin-left:.5rem;vertical-align:middle}
+.btn-sm{padding:.25rem .65rem;border-radius:.375rem;font-size:.75rem;font-weight:600;cursor:pointer;border:none;margin-right:.3rem}
+.btn-activate{background:#1e3a5f;color:#7dd3fc}.btn-activate:hover{background:#1e40af}
+.btn-delete{background:#450a0a;color:#fca5a5}.btn-delete:hover{background:#7f1d1d}
+.btn-activate.current{background:#134e4a;color:#5eead4;cursor:default}
 </style>
 </head>
 <body>
@@ -230,10 +296,10 @@ tr:hover td{background:#0f172a}
     </div>
     <table>
       <thead>
-        <tr><th>Nombre</th><th>Tamaño</th><th>Fecha</th></tr>
+        <tr><th>Nombre</th><th>Tamaño</th><th>Fecha</th><th>Acciones</th></tr>
       </thead>
       <tbody id="doc-tbody">
-        <tr><td colspan="3" style="text-align:center;color:#475569;padding:2rem">Cargando...</td></tr>
+        <tr><td colspan="4" style="text-align:center;color:#475569;padding:2rem">Cargando...</td></tr>
       </tbody>
     </table>
   </div>
@@ -347,22 +413,56 @@ async function doUpload(){
 async function loadDocs(){
   try{
     const d=await(await fetch("/api/documents")).json();
-    document.getElementById("doc-count").textContent=d.count+" archivo(s)";
+    document.getElementById("doc-count").textContent=d.count+" archivo(s)"+(d.active?" · activo: "+d.active:"");
     if(!d.documents||!d.documents.length){
       document.getElementById("doc-tbody").innerHTML=
-        '<tr><td colspan="3" style="text-align:center;color:#475569;padding:2rem">No hay documentos. Sube un PDF para que RAPIRO pueda responder sobre él.</td></tr>';
+        '<tr><td colspan="4" style="text-align:center;color:#475569;padding:2rem">No hay documentos. Sube un PDF para que RAPIRO pueda responder sobre él.</td></tr>';
       return;
     }
     document.getElementById("doc-tbody").innerHTML=d.documents.map(doc=>{
       const dt=new Date(doc.last_modified).toLocaleString("es-AR");
-      return '<tr class="doc-row"><td>'+doc.name+'</td>'+
+      const activeBadge=doc.active?'<span class="act-badge">ACTIVO</span>':'';
+      const activeBtnClass=doc.active?'btn-sm btn-activate current':'btn-sm btn-activate';
+      const activeBtnLabel=doc.active?'✓ Activo':'Activar';
+      const nameEsc=encodeURIComponent(doc.name);
+      return '<tr class="doc-row">'+
+             '<td>'+doc.name+activeBadge+'</td>'+
              '<td class="sz">'+doc.size_kb+' KB</td>'+
-             '<td class="sz">'+dt+'</td></tr>';
+             '<td class="sz">'+dt+'</td>'+
+             '<td>'+
+               '<button class="'+activeBtnClass+'" '+(doc.active?'disabled':'')+' onclick="activateDoc(\''+nameEsc+'\')">'+activeBtnLabel+'</button>'+
+               '<button class="btn-sm btn-delete" onclick="deleteDoc(\''+nameEsc+'\')">Eliminar</button>'+
+             '</td></tr>';
     }).join("");
   }catch(e){
     document.getElementById("doc-tbody").innerHTML=
-      '<tr><td colspan="3" style="text-align:center;color:#475569;padding:2rem">Error al cargar documentos.</td></tr>';
+      '<tr><td colspan="4" style="text-align:center;color:#475569;padding:2rem">Error al cargar documentos.</td></tr>';
   }
+}
+
+async function activateDoc(nameEnc){
+  const name=decodeURIComponent(nameEnc);
+  try{
+    const r=await fetch("/api/documents/activate",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name})
+    });
+    const j=await r.json();
+    if(r.ok){ showMsg("'"+name+"' ahora es el documento activo para RAPIRO.","ok"); loadDocs(); }
+    else showMsg("Error: "+(j.detail||r.statusText),"err");
+  }catch(e){ showMsg("Error de red.","err"); }
+}
+
+async function deleteDoc(nameEnc){
+  const name=decodeURIComponent(nameEnc);
+  if(!confirm("¿Eliminar '"+name+"' de S3?")) return;
+  try{
+    const r=await fetch("/api/documents?name="+encodeURIComponent(name),{method:"DELETE"});
+    const j=await r.json();
+    if(r.ok){ showMsg("'"+name+"' eliminado.","ok"); loadDocs(); }
+    else showMsg("Error: "+(j.detail||r.statusText),"err");
+  }catch(e){ showMsg("Error de red.","err"); }
 }
 
 function showMsg(text,type){

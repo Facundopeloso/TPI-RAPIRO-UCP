@@ -36,19 +36,34 @@ _study_material: list = [""]  # cargado una vez al arrancar
 
 
 def _load_study_material() -> str:
-    """Descarga el documento más reciente del S3 bucket de estudio."""
+    """Descarga el documento activo (o más reciente) del S3 bucket de estudio."""
     bucket = os.getenv("S3_BUCKET", "rapiro-user-documents-dev-442650748881")
     if not bucket:
         return ""
     try:
         import boto3
         s3 = boto3.client("s3", region_name=os.getenv("AWS_REGION", "sa-east-1"))
-        resp = s3.list_objects_v2(Bucket=bucket)
-        objs = resp.get("Contents", [])
-        if not objs:
-            return ""
-        latest = sorted(objs, key=lambda x: x["LastModified"], reverse=True)[0]
-        key = latest["Key"]
+
+        # Chequeamos si hay un documento activo seleccionado desde el dashboard
+        key = None
+        try:
+            active = s3.get_object(Bucket=bucket, Key="documents/active.txt")["Body"].read()
+            active_name = active.decode("utf-8", errors="replace").strip()
+            if active_name:
+                key = f"documents/{active_name}"
+                logger.info("Material de estudio: usando activo seleccionado '%s'", active_name)
+        except Exception:
+            pass
+
+        # Fallback: archivo más reciente
+        if not key:
+            resp = s3.list_objects_v2(Bucket=bucket, Prefix="documents/")
+            objs = [o for o in resp.get("Contents", []) if not o["Key"].endswith("active.txt") and o["Key"] != "documents/"]
+            if not objs:
+                return ""
+            key = sorted(objs, key=lambda x: x["LastModified"], reverse=True)[0]["Key"]
+            logger.info("Material de estudio: usando más reciente '%s'", key)
+
         body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
         text = body.decode("utf-8", errors="replace")
         logger.info("Material de estudio cargado: %s (%d chars)", key, len(text))
