@@ -435,14 +435,14 @@ async function loadDocs(){
       const activeBadge=doc.active?'<span class="act-badge">ACTIVO</span>':'';
       const activeBtnClass=doc.active?'btn-sm btn-activate current':'btn-sm btn-activate';
       const activeBtnLabel=doc.active?'✓ Activo':'Activar';
-      const nameEsc=encodeURIComponent(doc.name);
+      const safeN=doc.name.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
       return '<tr class="doc-row">'+
              '<td>'+doc.name+activeBadge+'</td>'+
              '<td class="sz">'+doc.size_kb+' KB</td>'+
              '<td class="sz">'+dt+'</td>'+
              '<td>'+
-               '<button class="'+activeBtnClass+'" '+(doc.active?'disabled':'')+' onclick="activateDoc(\''+nameEsc+'\')">'+activeBtnLabel+'</button>'+
-               '<button class="btn-sm btn-delete" onclick="deleteDoc(\''+nameEsc+'\')">Eliminar</button>'+
+               '<button class="'+activeBtnClass+'" data-name="'+safeN+'" '+(doc.active?'disabled':'')+' onclick="activateDoc(this.dataset.name)">'+activeBtnLabel+'</button>'+
+               '<button class="btn-sm btn-delete" data-name="'+safeN+'" onclick="deleteDoc(this.dataset.name)">Eliminar</button>'+
              '</td></tr>';
     }).join("");
   }catch(e){
@@ -451,8 +451,7 @@ async function loadDocs(){
   }
 }
 
-async function activateDoc(nameEnc){
-  const name=decodeURIComponent(nameEnc);
+async function activateDoc(name){
   try{
     const r=await fetch("/api/documents/activate",{
       method:"POST",
@@ -465,9 +464,8 @@ async function activateDoc(nameEnc){
   }catch(e){ showMsg("Error de red.","err"); }
 }
 
-async function deleteDoc(nameEnc){
-  const name=decodeURIComponent(nameEnc);
-  if(!confirm("¿Eliminar '"+name+"' de S3?")) return;
+async function deleteDoc(name){
+  if(!confirm("Eliminar '"+name+"' de S3?")) return;
   try{
     const r=await fetch("/api/documents?name="+encodeURIComponent(name),{method:"DELETE"});
     const j=await r.json();
